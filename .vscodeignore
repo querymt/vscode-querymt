@@ -1,0 +1,13 @@
+**/*.ts
+**/tsconfig.json
+**/esbuild.mjs
+src/
+test/
+node_modules/
+.vscode/
+.github/
+**/*.map
+**/*.svg
+.gitignore
+.eslintrc*
+.prettierrc*

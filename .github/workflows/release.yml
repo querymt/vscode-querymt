@@ -1,0 +1,62 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+      - name: Package VSIX
+        run: npm run package
+
+      - name: Determine version
+        id: meta
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          VSIX_FILE="vscode-querymt-${VERSION}.vsix"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "vsix_file=${VSIX_FILE}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify VSIX exists
+        run: ls -lh "${{ steps.meta.outputs.vsix_file }}"
+
+      - name: Publish to VS Code Marketplace
+        run: npx vsce publish --packagePath "${{ steps.meta.outputs.vsix_file }}"
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+
+      - name: Publish to Open VSX
+        if: vars.PUBLISH_OVSX == 'true'
+        run: npx ovsx publish "${{ steps.meta.outputs.vsix_file }}"
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.meta.outputs.vsix_file }}
+          generate_release_notes: true

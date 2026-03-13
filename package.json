@@ -1,0 +1,156 @@
+{
+  "name": "vscode-querymt",
+  "displayName": "QueryMT",
+  "description": "AI coding agent powered by QueryMT — chat, code generation, and language intelligence via the Agent Client Protocol",
+  "version": "0.1.0",
+  "publisher": "querymt",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/querymt/querymt"
+  },
+  "engines": {
+    "vscode": "^1.99.0"
+  },
+  "categories": [
+    "AI",
+    "Chat",
+    "Programming Languages"
+  ],
+  "keywords": [
+    "ai",
+    "agent",
+    "chat",
+    "coding assistant",
+    "acp",
+    "llm"
+  ],
+  "activationEvents": [
+    "onChatParticipant:querymt.agent",
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "icon": "media/icon.png",
+  "contributes": {
+    "chatParticipants": [
+      {
+        "id": "querymt.agent",
+        "name": "querymt",
+        "fullName": "QueryMT Agent",
+        "description": "AI coding agent powered by QueryMT",
+        "isDefault": false
+      }
+    ],
+    "languageModelChatProviders": [
+      {
+        "vendor": "querymt",
+        "displayName": "QueryMT",
+        "managementCommand": "querymt.manageProvider"
+      }
+    ],
+    "commands": [
+      {
+        "command": "querymt.manageProvider",
+        "title": "Manage Provider",
+        "category": "QueryMT"
+      },
+      {
+        "command": "querymt.restart",
+        "title": "Restart Agent",
+        "category": "QueryMT"
+      },
+      {
+        "command": "querymt.showLogs",
+        "title": "Show Agent Logs",
+        "category": "QueryMT"
+      },
+      {
+        "command": "querymt.statusBarMenu",
+        "title": "Agent Status",
+        "category": "QueryMT"
+      }
+    ],
+    "configuration": {
+      "title": "QueryMT",
+      "properties": {
+        "querymt.binaryPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Absolute path to the `coder_agent` binary. If empty, the extension searches:\n1. Bundled binary in the extension directory\n2. `coder_agent` on your system PATH",
+          "order": 1
+        },
+        "querymt.defaultProvider": {
+          "type": "string",
+          "default": "anthropic",
+          "enum": [
+            "anthropic",
+            "openai",
+            "llama_cpp",
+            "ollama"
+          ],
+          "enumDescriptions": [
+            "Anthropic (Claude models)",
+            "OpenAI (GPT models)",
+            "Local llama.cpp server",
+            "Local Ollama server"
+          ],
+          "markdownDescription": "Default LLM provider for new sessions",
+          "order": 2
+        },
+        "querymt.defaultModel": {
+          "type": "string",
+          "default": "claude-sonnet-4-20250514",
+          "markdownDescription": "Default model identifier (e.g., `claude-sonnet-4-20250514`, `gpt-4o`, `llama3:70b`)",
+          "order": 3
+        },
+        "querymt.configFile": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Path to a QueryMT agent TOML config file. Overrides default agent configuration.",
+          "order": 4
+        },
+        "querymt.autoStart": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Automatically start the agent when a workspace is opened",
+          "order": 5
+        },
+        "querymt.maxRestarts": {
+          "type": "integer",
+          "default": 5,
+          "minimum": 0,
+          "maximum": 20,
+          "markdownDescription": "Maximum number of automatic restart attempts after agent crashes",
+          "order": 6
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "lint": "tsc --noEmit",
+    "prepackage": "npm run build",
+    "package": "vsce package --no-dependencies",
+    "vscode:prepublish": "npm run build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:protocol": "vitest run test/protocol.test.ts",
+    "test:extension": "node test/extension-host/run.mjs"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "^0.16.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.99.0",
+    "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "^3.0.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.0"
+  },
+  "peerDependencies": {
+    "zod": "^3.25.0 || ^4.0.0"
+  }
+}
