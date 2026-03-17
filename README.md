@@ -2,6 +2,8 @@
 
 AI coding agent powered by QueryMT, integrated directly into VS Code's chat panel.
 
+For detailed documentation on the agent, including configuration and usage, see the [QueryMT Agent Documentation](https://docs.query.mt/latest/agent/).
+
 ## Features
 
 ### Chat Participant (`@querymt`)
@@ -34,6 +36,29 @@ The agent has access to VS Code's language server features:
 
 - VS Code 1.99.0 or later
 - The `coder_agent` binary installed and available on your PATH, or configured via settings
+
+## Downloading the Agent Binary
+
+The `coder_agent` binary can be downloaded from the latest release or from nightly builds:
+
+- [Latest release](https://github.com/querymt/querymt/releases/latest)
+- [Nightly builds](https://nightly.link/querymt/querymt/workflows/nightly/main?preview)
+
+Download the artifact matching your operating system and architecture. After downloading, make the binary executable (macOS/Linux):
+
+```bash
+chmod +x coder_agent
+```
+
+### macOS Silicon releases
+
+macOS Silicon users who download the `coder_agent` release binary need to clear the quarantine flag before running it:
+
+```bash
+xattr -dr com.apple.quarantine coder_agent
+```
+
+Once ready, either place the binary on your PATH or set the `querymt.binaryPath` setting to point to it.
 
 ## Setup
 
