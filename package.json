@@ -142,7 +142,7 @@
     "@agentclientprotocol/sdk": "^0.16.1"
   },
   "devDependencies": {
-    "@types/node": "^20.0.0",
+    "@types/node": "^24.0.0",
     "@types/vscode": "^1.99.0",
     "@vscode/test-electron": "^2.5.2",
     "@vscode/vsce": "^3.0.0",
