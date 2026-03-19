@@ -1,11 +1,17 @@
 /**
- * ACP stdio client — manages the `coder_agent --acp` subprocess and provides
+ * ACP stdio client — manages the `qmtcode --acp` subprocess and provides
  * a typed wrapper around `@agentclientprotocol/sdk`'s `ClientSideConnection`.
  */
 
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import {
+  ensureDownloadedBinary,
+  getBundledBinaryCandidates,
+  getStoredBinaryPath,
+  type ReleaseChannel,
+} from "./binary-manager.js";
 import { Writable, Readable } from "node:stream";
 import * as vscode from "vscode";
 import {
@@ -14,6 +20,7 @@ import {
   PROTOCOL_VERSION,
   type Agent,
   type Client,
+  type ContentBlock,
   type SessionNotification,
   type RequestPermissionRequest,
   type RequestPermissionResponse,
@@ -22,7 +29,7 @@ import {
   type ReadTextFileRequest,
   type ReadTextFileResponse,
 } from "@agentclientprotocol/sdk";
-import { createLogger, formatError } from "./logger.js";
+import { createLogger } from "./logger.js";
 import type { WorkspaceQueryParams, WorkspaceQueryResponse } from "./types.js";
 
 // ── Event types ──
@@ -55,6 +62,7 @@ export type ElicitationHandler = (
 // ── AcpClient ──
 
 export class AcpClient implements vscode.Disposable {
+  constructor(private readonly globalStoragePath: string) {}
   private process: ChildProcess | undefined;
   private connection: ClientSideConnection | undefined;
   private disposables: vscode.Disposable[] = [];
@@ -76,7 +84,7 @@ export class AcpClient implements vscode.Disposable {
       return;
     }
     this.log.info("Starting ACP agent subprocess...");
-    const binaryPath = this.resolveBinaryPath();
+    const binaryPath = await this.resolveBinaryPath();
     this.log.info(`Binary: ${binaryPath}`);
 
     const cwd =
@@ -151,17 +159,17 @@ export class AcpClient implements vscode.Disposable {
   }
 
   /**
-   * Resolve the coder_agent binary path using the following priority:
+   * Resolve the qmtcode binary path using the following priority:
    * 1. User-configured `querymt.binaryPath` setting
    * 2. Bundled binary in the extension directory (platform-specific)
    * 3. Binary on PATH
-   * Throws if no binary can be found.
+   * 4. Previously auto-downloaded binary in extension global storage
+   * 5. Auto-download a matching binary if enabled
    */
-  private resolveBinaryPath(): string {
+  private async resolveBinaryPath(): Promise<string> {
     // 1. User setting
-    const configured = vscode.workspace
-      .getConfiguration("querymt")
-      .get<string>("binaryPath");
+    const config = vscode.workspace.getConfiguration("querymt");
+    const configured = config.get<string>("binaryPath");
     if (configured && configured.length > 0) {
       if (existsSync(configured)) {
         return configured;
@@ -169,28 +177,62 @@ export class AcpClient implements vscode.Disposable {
       this.log.warn(`Configured binary path not found: ${configured}, falling back to discovery`);
     }
 
-    // 2. Bundled binary (platform-specific subdirectory)
+    // 2. Bundled binary (supports legacy and target-triple naming)
     const extensionPath = vscode.extensions.getExtension("querymt.vscode-querymt")?.extensionPath;
     if (extensionPath) {
-      const platformBinary = getBundledBinaryName();
-      const bundledPath = join(extensionPath, "bin", platformBinary);
-      if (existsSync(bundledPath)) {
-        this.log.debug(`Using bundled binary: ${bundledPath}`);
-        return bundledPath;
+      for (const candidate of getBundledBinaryCandidates()) {
+        const bundledPath = join(extensionPath, "bin", candidate);
+        if (existsSync(bundledPath)) {
+          this.log.debug(`Using bundled binary: ${bundledPath}`);
+          return bundledPath;
+        }
       }
     }
 
     // 3. Check PATH using `which` (Unix) or `where` (Windows)
-    const pathBinary = findOnPath("coder_agent");
+    const pathBinary = findOnPath("qmtcode");
     if (pathBinary) {
       this.log.debug(`Using binary from PATH: ${pathBinary}`);
       return pathBinary;
     }
 
-    // No binary found — will fail at spawn, but give a clear error
+    // 4. Reuse a previously downloaded binary from global storage
+    const downloaded = getStoredBinaryPath(this.globalStoragePath);
+    if (downloaded) {
+      this.log.debug(`Using downloaded binary: ${downloaded}`);
+      return downloaded;
+    }
+
+    // 5. Auto-download if enabled
+    const autoDownload = config.get<boolean>("autoDownload", true);
+    if (autoDownload) {
+      const channelSetting = config.get<string>("channel", "stable");
+      const channel: ReleaseChannel = channelSetting === "nightly" ? "nightly" : "stable";
+
+      try {
+        const downloadedPath = await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: "QueryMT",
+          },
+          async (progress) => {
+            progress.report({ message: `Downloading qmtcode (${channel})...` });
+            return ensureDownloadedBinary(
+              this.globalStoragePath,
+              channel,
+              progress,
+              this.log,
+            );
+          },
+        );
+        return downloadedPath;
+      } catch (err) {
+        this.log.error("Automatic qmtcode download failed", err);
+      }
+    }
+
     throw new Error(
-      "Could not find the coder_agent binary. " +
-      "Install it and ensure it is on your PATH, or set querymt.binaryPath in settings.",
+      "Could not find or download the qmtcode binary. Install it with `curl -sSf https://query.mt/install.sh | sh` or set querymt.binaryPath in settings.",
     );
   }
 
@@ -271,12 +313,12 @@ export class AcpClient implements vscode.Disposable {
 
   async prompt(
     sessionId: string,
-    text: string,
+    contentBlocks: ContentBlock[],
   ): Promise<{ stopReason: string }> {
     this.ensureConnected();
     const resp = await this.connection!.prompt({
       sessionId,
-      prompt: [{ type: "text", text }],
+      prompt: contentBlocks,
     });
     return { stopReason: resp.stopReason };
   }
@@ -299,6 +341,15 @@ export class AcpClient implements vscode.Disposable {
   }
 
   /**
+   * Set the model for an existing session.
+   * Delegates to the ACP `session/set_model` (unstable) method.
+   */
+  async setModel(sessionId: string, modelId: string): Promise<void> {
+    this.ensureConnected();
+    await this.connection!.unstable_setSessionModel({ sessionId, modelId });
+  }
+
+  /**
    * Send a custom extension method to the agent (client → agent).
    */
   async extMethod(
@@ -307,6 +358,17 @@ export class AcpClient implements vscode.Disposable {
   ): Promise<Record<string, unknown>> {
     this.ensureConnected();
     return this.connection!.extMethod(method, params);
+  }
+
+  /**
+   * Send a fire-and-forget notification to the agent (client → agent).
+   */
+  async extNotification(
+    method: string,
+    params: Record<string, unknown>,
+  ): Promise<void> {
+    this.ensureConnected();
+    await this.connection!.extNotification(method, params);
   }
 
   // ── Event registration ──
@@ -391,7 +453,7 @@ export class AcpClient implements vscode.Disposable {
         this.log.debug(`Received ext method from agent: ${method}`);
 
         // Route elicitation requests to the dedicated handler
-        if (method === "querymt/elicit" && this.elicitationHandler) {
+        if (method === "_querymt/elicit" && this.elicitationHandler) {
           const result = await this.elicitationHandler(
             params as unknown as ElicitationParams,
           );
@@ -425,44 +487,6 @@ export class AcpClient implements vscode.Disposable {
 }
 
 // ── Module-level helpers ──
-
-/**
- * Get the expected bundled binary name for the current platform.
- */
-function getBundledBinaryName(): string {
-  const platform = process.platform;
-  const arch = process.arch;
-
-  const ext = platform === "win32" ? ".exe" : "";
-  let os: string;
-  switch (platform) {
-    case "darwin":
-      os = "darwin";
-      break;
-    case "linux":
-      os = "linux";
-      break;
-    case "win32":
-      os = "windows";
-      break;
-    default:
-      os = platform;
-  }
-
-  let cpu: string;
-  switch (arch) {
-    case "x64":
-      cpu = "amd64";
-      break;
-    case "arm64":
-      cpu = "arm64";
-      break;
-    default:
-      cpu = arch;
-  }
-
-  return `coder_agent-${os}-${cpu}${ext}`;
-}
 
 /**
  * Find a binary on PATH. Returns the absolute path or undefined.

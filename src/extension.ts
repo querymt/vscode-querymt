@@ -30,7 +30,7 @@ export async function activate(
 
   // ── ACP Client ──
 
-  acpClient = new AcpClient();
+  acpClient = new AcpClient(context.globalStorageUri.fsPath);
   context.subscriptions.push(acpClient);
 
   // Register the workspace query handler for reverse-RPC from the agent.
@@ -51,9 +51,15 @@ export async function activate(
     },
   );
 
+  // ── Status Bar ──
+
+  const statusBar = new StatusBar(acpClient);
+  context.subscriptions.push(statusBar);
+  context.subscriptions.push(registerStatusBarCommand(acpClient, statusBar));
+
   // ── Chat Participant ──
 
-  const chatDisposables = registerChatParticipant(acpClient);
+  const chatDisposables = registerChatParticipant(acpClient, statusBar);
   for (const d of chatDisposables) {
     context.subscriptions.push(d);
   }
@@ -118,7 +124,7 @@ export async function activate(
       switch (selected.label) {
         case "Set Binary Path": {
           const value = await vscode.window.showInputBox({
-            prompt: "Path to coder_agent binary (leave empty to use PATH)",
+            prompt: "Path to qmtcode binary (leave empty to use auto-discovery)",
             value: config.get<string>("binaryPath") || "",
           });
           if (value !== undefined) {
@@ -180,11 +186,25 @@ export async function activate(
     }),
   );
 
-  // ── Status Bar ──
-
-  const statusBar = new StatusBar(acpClient);
-  context.subscriptions.push(statusBar);
-  context.subscriptions.push(registerStatusBarCommand(acpClient, statusBar));
+  context.subscriptions.push(
+    vscode.commands.registerCommand("querymt.refreshModels", async () => {
+      if (!acpClient?.isConnected) {
+        vscode.window.showWarningMessage(
+          "QueryMT agent is not connected. Cannot refresh models.",
+        );
+        return;
+      }
+      try {
+        await acpClient!.extMethod("_querymt/refreshModels", {});
+        modelProvider.refreshModels();
+        vscode.window.showInformationMessage("QueryMT model list refreshed.");
+      } catch (err) {
+        vscode.window.showErrorMessage(
+          `Failed to refresh models: ${formatError(err)}`,
+        );
+      }
+    }),
+  );
 
   // ── Auto-start the agent ──
   // The agent is started lazily when the first chat message arrives,

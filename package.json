@@ -2,7 +2,7 @@
   "name": "vscode-querymt",
   "displayName": "QueryMT",
   "description": "AI coding agent powered by QueryMT — chat, code generation, and language intelligence via the Agent Client Protocol",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "publisher": "querymt",
   "license": "MIT",
   "repository": {
@@ -68,6 +68,11 @@
         "command": "querymt.statusBarMenu",
         "title": "Agent Status",
         "category": "QueryMT"
+      },
+      {
+        "command": "querymt.refreshModels",
+        "title": "Refresh Models",
+        "category": "QueryMT"
       }
     ],
     "configuration": {
@@ -76,7 +81,7 @@
         "querymt.binaryPath": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Absolute path to the `coder_agent` binary. If empty, the extension searches:\n1. Bundled binary in the extension directory\n2. `coder_agent` on your system PATH",
+          "markdownDescription": "Absolute path to the `qmtcode` binary. If empty, the extension checks: 1) bundled binaries, 2) `qmtcode` on PATH, 3) previously downloaded binary, 4) auto-download (if enabled).",
           "order": 1
         },
         "querymt.defaultProvider": {
@@ -122,6 +127,26 @@
           "maximum": 20,
           "markdownDescription": "Maximum number of automatic restart attempts after agent crashes",
           "order": 6
+        },
+        "querymt.autoDownload": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Automatically download the `qmtcode` binary if it cannot be found in settings, bundled binaries, or PATH",
+          "order": 7
+        },
+        "querymt.channel": {
+          "type": "string",
+          "default": "stable",
+          "enum": [
+            "stable",
+            "nightly"
+          ],
+          "enumDescriptions": [
+            "Latest stable release",
+            "Nightly development build"
+          ],
+          "markdownDescription": "Release channel used when auto-downloading `qmtcode`",
+          "order": 8
         }
       }
     }

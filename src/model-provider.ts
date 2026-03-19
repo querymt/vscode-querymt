@@ -14,22 +14,55 @@ import type { AcpClient } from "./acp-client.js";
 
 // ── Types for agent ↔ extension model protocol ──
 
-interface AgentModelInfo {
+/** Mirrors the `ModelEntry` shape returned by the qmtcode agent. */
+interface AgentModelEntry {
+  /** Canonical internal identifier */
   id: string;
-  name: string;
-  family: string;
-  version: string;
+  /** Human-readable display label */
+  label: string;
+  /** Model source: "preset", "cached", "custom", "catalog" */
+  source: string;
+  /** Provider name */
   provider: string;
-  maxInputTokens: number;
-  maxOutputTokens: number;
-  capabilities: {
-    imageInput?: boolean;
-    toolCalling?: boolean;
-  };
+  /** Original model identifier (for backwards compatibility) */
+  model: string;
+  /** Stable node id where this provider lives */
+  node_id?: string;
+  /** Human-readable node label for display purposes */
+  node_label?: string;
+  /** Model family/repo for grouping */
+  family?: string;
+  /** Quantization level (e.g., "Q8_0", "Q6_K", "unknown") */
+  quant?: string;
 }
 
 interface AgentModelsResponse {
-  models: AgentModelInfo[];
+  models: AgentModelEntry[];
+}
+
+/** Wire shape of ModelInfo as serialized by serde (capabilities flattened). */
+interface AgentModelInfo {
+  id: string;
+  name: string;
+  // Capabilities are flattened to top-level by serde
+  tool_call: boolean;
+  attachment: boolean;
+  reasoning: boolean;
+  temperature: boolean;
+  modalities: { input: string[]; output: string[] };
+  // Limits (renamed from "limits" to "limit" by serde)
+  limit: { context?: number; output?: number };
+  // Pricing (renamed from "pricing" to "cost" by serde)
+  cost: { input?: number; output?: number };
+  // Metadata
+  knowledge?: string;
+  release_date?: string;
+  last_updated?: string;
+  open_weights?: boolean;
+}
+
+interface AgentModelInfoResponse {
+  models: Record<string, AgentModelInfo | null>;
 }
 
 interface AgentChatRequest {
@@ -38,6 +71,11 @@ interface AgentChatRequest {
   tools?: unknown[];
   options?: Record<string, unknown>;
 }
+
+// ── Sensible defaults when agent doesn't report token limits ──
+
+const DEFAULT_MAX_INPUT_TOKENS = 128_000;
+const DEFAULT_MAX_OUTPUT_TOKENS = 16_384;
 
 // ── Model info type that extends VS Code's interface ──
 
@@ -75,21 +113,61 @@ export class QueryMTModelProvider
         {},
       )) as unknown as AgentModelsResponse;
 
-      return (resp.models ?? []).map(
-        (m): QueryMTModelInfo => ({
+      const valid = (resp.models ?? []).filter((m) => {
+        if (!m.id) {
+          this.log.warn(`Skipping model with missing id: ${JSON.stringify(m)}`);
+          return false;
+        }
+        return true;
+      });
+
+      // Fetch model metadata from providers registry in a single batch.
+      const infoMap = await this.fetchModelInfo(valid);
+
+      // Detect which base labels appear more than once so we can
+      // prepend the provider name to disambiguate in the picker.
+      const labelCounts = new Map<string, number>();
+      for (const m of valid) {
+        const base = m.label || m.model || m.id;
+        labelCounts.set(base, (labelCounts.get(base) ?? 0) + 1);
+      }
+
+      return valid.map((m): QueryMTModelInfo => {
+        const baseLabel = m.label || m.model || m.id;
+        const isDuplicate = (labelCounts.get(baseLabel) ?? 0) > 1;
+        const displayName = isDuplicate && m.provider
+          ? `${baseLabel} (${m.provider})`
+          : baseLabel;
+
+        // Build informative detail + tooltip for the picker UI
+        const detailParts: string[] = [];
+        if (m.provider) detailParts.push(m.provider);
+        if (m.source) detailParts.push(m.source);
+        if (m.node_label) detailParts.push(m.node_label);
+        const detail = detailParts.join(" \u2022 ") || undefined;
+
+        const tooltip = m.id !== displayName ? m.id : undefined;
+
+        // Resolve capabilities and limits from registry metadata
+        const infoKey = `${m.provider}/${m.model}`;
+        const info = infoMap.get(infoKey);
+
+        return {
           id: m.id,
           modelId: m.id,
-          name: m.name,
-          family: m.family,
-          version: m.version,
-          maxInputTokens: m.maxInputTokens,
-          maxOutputTokens: m.maxOutputTokens,
+          name: displayName,
+          family: m.family ?? m.provider ?? "",
+          version: m.quant ?? "",
+          maxInputTokens: info?.limit?.context ?? DEFAULT_MAX_INPUT_TOKENS,
+          maxOutputTokens: info?.limit?.output ?? DEFAULT_MAX_OUTPUT_TOKENS,
           capabilities: {
-            imageInput: m.capabilities.imageInput ?? false,
-            toolCalling: m.capabilities.toolCalling ?? false,
+            imageInput: info?.modalities?.input?.includes("image") ?? false,
+            toolCalling: info?.tool_call ?? true,
           },
-        }),
-      );
+          ...(detail !== undefined && { detail }),
+          ...(tooltip !== undefined && { tooltip }),
+        };
+      });
     } catch (err) {
       this.log.error("Failed to list models", err);
       return [];
@@ -165,6 +243,47 @@ export class QueryMTModelProvider
         typeof text === "string" ? text : extractTextContent(text.content);
       return Math.ceil(str.length / 4);
     }
+  }
+
+  /**
+   * Batch-fetch model metadata from the agent's providers registry.
+   * Returns a map keyed by "provider/model" with ModelInfo or undefined.
+   */
+  private async fetchModelInfo(
+    models: AgentModelEntry[],
+  ): Promise<Map<string, AgentModelInfo>> {
+    const result = new Map<string, AgentModelInfo>();
+
+    // Deduplicate keys to avoid redundant lookups
+    const uniqueKeys = new Map<string, { provider: string; model: string }>();
+    for (const m of models) {
+      if (m.provider && m.model) {
+        const key = `${m.provider}/${m.model}`;
+        if (!uniqueKeys.has(key)) {
+          uniqueKeys.set(key, { provider: m.provider, model: m.model });
+        }
+      }
+    }
+
+    if (uniqueKeys.size === 0) return result;
+
+    try {
+      const resp = (await this.acpClient.extMethod("_querymt/modelInfo", {
+        models: Array.from(uniqueKeys.values()),
+      })) as unknown as AgentModelInfoResponse;
+
+      if (resp?.models) {
+        for (const [key, info] of Object.entries(resp.models)) {
+          if (info) {
+            result.set(key, info);
+          }
+        }
+      }
+    } catch (err) {
+      this.log.warn(`Failed to fetch model info: ${formatError(err)}`);
+    }
+
+    return result;
   }
 
   /** Notify VS Code that available models have changed. */

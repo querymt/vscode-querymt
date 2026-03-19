@@ -13,6 +13,9 @@ export class StatusBar implements vscode.Disposable {
   private pollTimer: ReturnType<typeof setInterval> | undefined;
   private acpClient: AcpClient;
   private currentState: AgentState = "disconnected";
+  private lastUsage:
+    | { size: number; used: number; cost?: { amount: number; currency: string } | null }
+    | undefined;
 
   constructor(acpClient: AcpClient) {
     this.acpClient = acpClient;
@@ -39,6 +42,7 @@ export class StatusBar implements vscode.Disposable {
 
   update(state: AgentState): void {
     this.currentState = state;
+    this.lastUsage = undefined; // clear usage on state change
     switch (state) {
       case "disconnected":
         this.item.text = "$(circle-slash) QueryMT";
@@ -63,6 +67,32 @@ export class StatusBar implements vscode.Disposable {
         );
         break;
     }
+  }
+
+  /** Update the status bar with token usage information. */
+  updateUsage(usage: {
+    size: number;
+    used: number;
+    cost?: { amount: number; currency: string } | null;
+  }): void {
+    this.lastUsage = usage;
+
+    if (usage.used === 0 && usage.size === 0) {
+      // Reset to normal connected state
+      this.update(this.currentState);
+      return;
+    }
+
+    // Format token count compactly: 45000 → "45k"
+    const usedK = Math.round(usage.used / 1000);
+    const sizeK = Math.round(usage.size / 1000);
+    this.item.text = `$(check) QueryMT ${usedK}k/${sizeK}k`;
+
+    let tooltip = `QueryMT agent: connected\nTokens: ${usage.used.toLocaleString()} / ${usage.size.toLocaleString()}`;
+    if (usage.cost) {
+      tooltip += `\nCost: ${usage.cost.amount.toFixed(2)} ${usage.cost.currency}`;
+    }
+    this.item.tooltip = tooltip;
   }
 
   dispose(): void {
@@ -101,6 +131,10 @@ export function registerStatusBarCommand(
         label: "$(gear) Manage Provider",
         description: "Configure binary path, model, provider",
       },
+      {
+        label: "$(sync) Refresh Models",
+        description: "Re-fetch available models from all providers",
+      },
     ];
 
     const selected = await vscode.window.showQuickPick(items, {
@@ -116,6 +150,8 @@ export function registerStatusBarCommand(
       await vscode.commands.executeCommand("querymt.showLogs");
     } else if (selected.label.includes("Manage Provider")) {
       await vscode.commands.executeCommand("querymt.manageProvider");
+    } else if (selected.label.includes("Refresh Models")) {
+      await vscode.commands.executeCommand("querymt.refreshModels");
     }
   });
 }

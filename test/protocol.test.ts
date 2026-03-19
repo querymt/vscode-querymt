@@ -1,11 +1,11 @@
 /**
  * Protocol integration tests — exercises the ACP protocol against a real
- * `coder_agent` binary without any VS Code dependency.
+ * `qmtcode` binary without any VS Code dependency.
  *
- * Set the CODER_AGENT_BIN env var to the path of the coder_agent binary.
- * Optionally set CODER_AGENT_CONFIG to a TOML config file path.
+ * Set the QMTCODE_BIN env var to the path of the qmtcode binary.
+ * Optionally set QMTCODE_CONFIG to a TOML config file path.
  *
- * Tests are skipped when CODER_AGENT_BIN is not set.
+ * Tests are skipped when QMTCODE_BIN is not set.
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
@@ -24,8 +24,8 @@ import {
 
 // ── Env ──
 
-const AGENT_BIN = process.env.CODER_AGENT_BIN;
-const AGENT_CONFIG = process.env.CODER_AGENT_CONFIG;
+const AGENT_BIN = process.env.QMTCODE_BIN;
+const AGENT_CONFIG = process.env.QMTCODE_CONFIG;
 
 const describeWithAgent = AGENT_BIN ? describe : describe.skip;
 

@@ -8,8 +8,8 @@
  * Usage:
  *   npm run test:extension
  *
- * Requires CODER_AGENT_BIN env var to point to the coder_agent binary.
- * Optionally set CODER_AGENT_CONFIG to a TOML config path.
+ * Requires QMTCODE_BIN env var to point to the qmtcode binary.
+ * Optionally set QMTCODE_CONFIG to a TOML config path.
  */
 
 import { runTests, downloadAndUnzipVSCode } from "@vscode/test-electron";
@@ -32,8 +32,8 @@ async function main() {
       resolve(projectRoot), // open workspace
     ],
     extensionTestsEnv: {
-      CODER_AGENT_BIN: process.env.CODER_AGENT_BIN ?? "",
-      CODER_AGENT_CONFIG: process.env.CODER_AGENT_CONFIG ?? "",
+      QMTCODE_BIN: process.env.QMTCODE_BIN ?? "",
+      QMTCODE_CONFIG: process.env.QMTCODE_CONFIG ?? "",
     },
   });
 }

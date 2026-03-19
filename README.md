@@ -35,51 +35,58 @@ The agent has access to VS Code's language server features:
 ## Requirements
 
 - VS Code 1.99.0 or later
-- The `coder_agent` binary installed and available on your PATH, or configured via settings
-
-## Downloading the Agent Binary
-
-The `coder_agent` binary can be downloaded from the latest release or from nightly builds:
-
-- [Latest release](https://github.com/querymt/querymt/releases/latest)
-- [Nightly builds](https://nightly.link/querymt/querymt/workflows/nightly/main?preview)
-
-Download the artifact matching your operating system and architecture. After downloading, make the binary executable (macOS/Linux):
-
-```bash
-chmod +x coder_agent
-```
-
-### macOS Silicon releases
-
-macOS Silicon users who download the `coder_agent` release binary need to clear the quarantine flag before running it:
-
-```bash
-xattr -dr com.apple.quarantine coder_agent
-```
-
-Once ready, either place the binary on your PATH or set the `querymt.binaryPath` setting to point to it.
+- Network access on first run if `qmtcode` needs to be auto-downloaded
 
 ## Setup
 
 1. Install the extension
-2. Ensure `coder_agent` is available:
-   - Place it on your system PATH, or
-   - Set `querymt.binaryPath` in VS Code settings
-3. Open a workspace folder
-4. The agent starts automatically (configurable via `querymt.autoStart`)
+2. Open a workspace folder
+3. The extension starts the agent automatically (configurable via `querymt.autoStart`)
+4. If `qmtcode` is missing, the extension auto-downloads the correct binary for your platform
 5. Type `@querymt` in the chat panel to begin
+
+## Manual Installation (optional)
+
+If you prefer to manage binaries yourself, install `qmt` and `qmtcode` manually:
+
+macOS / Linux:
+
+```bash
+curl -sSf https://query.mt/install.sh | sh
+```
+
+Nightly channel:
+
+```bash
+curl -sSf https://query.mt/install.sh | sh -s -- --nightly
+```
+
+Windows PowerShell:
+
+```powershell
+irm https://query.mt/install.ps1 | iex
+```
+
+Windows nightly channel:
+
+```powershell
+$env:QMT_CHANNEL='nightly'; irm https://query.mt/install.ps1 | iex
+```
+
+You can also set `querymt.binaryPath` to point to a specific binary.
 
 ## Extension Settings
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `querymt.binaryPath` | `""` | Absolute path to `coder_agent`. If empty, searches bundled binary then PATH. |
+| `querymt.binaryPath` | `""` | Absolute path to `qmtcode`. If empty, extension auto-discovers and can auto-download. |
 | `querymt.defaultProvider` | `"anthropic"` | Default LLM provider (`anthropic`, `openai`, `llama_cpp`, `ollama`) |
 | `querymt.defaultModel` | `"claude-sonnet-4-20250514"` | Default model identifier |
 | `querymt.configFile` | `""` | Path to a QueryMT agent TOML config file |
 | `querymt.autoStart` | `true` | Automatically start the agent when a workspace is opened |
 | `querymt.maxRestarts` | `5` | Maximum automatic restart attempts after agent crashes |
+| `querymt.autoDownload` | `true` | Automatically download `qmtcode` when not found locally |
+| `querymt.channel` | `"stable"` | Release channel for auto-download (`stable` or `nightly`) |
 
 ## Commands
 
@@ -101,7 +108,7 @@ Click the status bar item for quick access to restart, logs, and settings.
 
 ## Architecture
 
-The extension communicates with the `coder_agent` binary over stdio using the [Agent Client Protocol (ACP)](https://agentclientprotocol.com). The agent runs as a child process and exchanges JSON-RPC messages for session management, prompt processing, and tool execution.
+The extension communicates with the `qmtcode` binary over stdio using the [Agent Client Protocol (ACP)](https://agentclientprotocol.com). The agent runs as a child process and exchanges JSON-RPC messages for session management, prompt processing, and tool execution.
 
 ## Development
 
