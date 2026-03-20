@@ -20,6 +20,279 @@ import type { WorkspaceQueryParams } from "./types.js";
 
 let acpClient: AcpClient | undefined;
 
+const SUPPORTED_OAUTH_PROVIDERS = new Set([
+  "anthropic",
+  "google",
+  "kimi-oauth",
+  "codex",
+]);
+
+type OAuthStatus = "not_authenticated" | "expired" | "connected";
+
+interface AuthProviderStatus {
+  provider: string;
+  display_name?: string;
+  oauth_status?: OAuthStatus;
+  supports_oauth?: boolean;
+  has_stored_api_key?: boolean;
+  has_env_api_key?: boolean;
+  env_var_name?: string;
+  preferred_method?: string;
+}
+
+interface StartFlowResult {
+  flow_id: string;
+  provider: string;
+  authorization_url?: string;
+  flow_kind?: string;
+}
+
+interface CompleteOrLogoutResult {
+  provider?: string;
+  success?: boolean;
+  message?: string;
+}
+
+function asObject(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  return value as Record<string, unknown>;
+}
+
+function parseAuthStatuses(payload: unknown): AuthProviderStatus[] {
+  const obj = asObject(payload);
+  if (!obj) {
+    return [];
+  }
+  const providers = obj.providers;
+  if (!Array.isArray(providers)) {
+    return [];
+  }
+  return providers
+    .map((p) => asObject(p))
+    .filter((p): p is Record<string, unknown> => !!p)
+    .filter((p) => typeof p.provider === "string")
+    .map((p) => ({
+      provider: p.provider as string,
+      display_name:
+        typeof p.display_name === "string" ? p.display_name : undefined,
+      oauth_status:
+        typeof p.oauth_status === "string"
+          ? (p.oauth_status as OAuthStatus)
+          : undefined,
+      supports_oauth:
+        typeof p.supports_oauth === "boolean" ? p.supports_oauth : undefined,
+      has_stored_api_key:
+        typeof p.has_stored_api_key === "boolean"
+          ? p.has_stored_api_key
+          : undefined,
+      has_env_api_key:
+        typeof p.has_env_api_key === "boolean" ? p.has_env_api_key : undefined,
+      env_var_name:
+        typeof p.env_var_name === "string" ? p.env_var_name : undefined,
+      preferred_method:
+        typeof p.preferred_method === "string" ? p.preferred_method : undefined,
+    }));
+}
+
+function parseStartFlowResult(payload: unknown): StartFlowResult {
+  const p = asObject(payload);
+  if (!p) {
+    return { flow_id: "", provider: "" };
+  }
+  return {
+    flow_id: typeof p.flow_id === "string" ? p.flow_id : "",
+    provider: typeof p.provider === "string" ? p.provider : "",
+    authorization_url:
+      typeof p.authorization_url === "string"
+        ? p.authorization_url
+        : undefined,
+    flow_kind: typeof p.flow_kind === "string" ? p.flow_kind : undefined,
+  };
+}
+
+function parseCompleteOrLogoutResult(
+  payload: unknown,
+): CompleteOrLogoutResult {
+  const p = asObject(payload);
+  if (!p) {
+    return {};
+  }
+  return {
+    provider: typeof p.provider === "string" ? p.provider : undefined,
+    success: typeof p.success === "boolean" ? p.success : undefined,
+    message: typeof p.message === "string" ? p.message : undefined,
+  };
+}
+
+async function fetchAuthStatuses(client: AcpClient): Promise<AuthProviderStatus[]> {
+  const payload = await client.extMethod("_querymt/auth/status", {});
+  return parseAuthStatuses(payload);
+}
+
+async function pickOAuthProvider(client: AcpClient): Promise<AuthProviderStatus | undefined> {
+  const statuses = await fetchAuthStatuses(client);
+  const oauthProviders = statuses
+    .filter((s) => s.supports_oauth)
+    .filter((s) => SUPPORTED_OAUTH_PROVIDERS.has(s.provider));
+
+  if (oauthProviders.length === 0) {
+    vscode.window.showWarningMessage(
+      "No supported OAuth providers are available in the current agent configuration.",
+    );
+    return undefined;
+  }
+
+  const picked = await vscode.window.showQuickPick(
+    oauthProviders.map((s) => ({
+      label: s.display_name || s.provider,
+      detail: s.provider,
+      description: `oauth: ${s.oauth_status || "unknown"}`,
+      status: s,
+    })),
+    {
+      title: "QueryMT: Select OAuth Provider",
+      placeHolder: "Choose a provider",
+    },
+  );
+
+  return picked?.status;
+}
+
+async function waitForRedirectCompletion(
+  client: AcpClient,
+  provider: string,
+): Promise<void> {
+  const POLL_INTERVAL_MS = 2000;
+  const MAX_POLLS = 60; // 2 minutes
+
+  await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: `Waiting for ${provider} sign-in to complete...`,
+      cancellable: true,
+    },
+    async (_progress, token) => {
+      for (let i = 0; i < MAX_POLLS; i++) {
+        if (token.isCancellationRequested) {
+          vscode.window.showInformationMessage(
+            `Sign-in for ${provider} cancelled. Run 'QueryMT: Sign In to Provider' to try again.`,
+          );
+          return;
+        }
+
+        const statuses = await fetchAuthStatuses(client);
+        const match = statuses.find((s) => s.provider === provider);
+        if (match?.oauth_status === "connected") {
+          vscode.window.showInformationMessage(
+            `Successfully authenticated with ${match.display_name || provider}.`,
+          );
+          return;
+        }
+
+        await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+      }
+
+      vscode.window.showWarningMessage(
+        `Sign-in for ${provider} timed out. Check 'QueryMT: Show Auth Status' or try again.`,
+      );
+    },
+  );
+}
+
+async function promptAndCompleteDeviceFlow(
+  client: AcpClient,
+  flowId: string,
+  provider: string,
+): Promise<void> {
+  const response = await vscode.window.showInputBox({
+    prompt:
+      "Paste the authorization code or device code to complete sign-in",
+    placeHolder: "code",
+    ignoreFocusOut: true,
+  });
+  if (response === undefined || response.trim().length === 0) {
+    vscode.window.showInformationMessage(
+      `Sign-in for ${provider} cancelled.`,
+    );
+    return;
+  }
+
+  const payload = await client.extMethod("_querymt/auth/complete", {
+    flow_id: flowId,
+    response,
+  });
+  const result = parseCompleteOrLogoutResult(payload);
+  if (result.success) {
+    vscode.window.showInformationMessage(
+      result.message || `Successfully authenticated with ${provider}.`,
+    );
+    return;
+  }
+
+  vscode.window.showErrorMessage(
+    result.message || `Failed to complete sign-in for ${provider}.`,
+  );
+}
+
+function authStatusIcon(s: AuthProviderStatus): string {
+  if (s.supports_oauth) {
+    switch (s.oauth_status) {
+      case "connected":
+        return "$(pass-filled)";
+      case "expired":
+        return "$(warning)";
+      case "not_authenticated":
+        return "$(circle-slash)";
+      default:
+        return "$(question)";
+    }
+  }
+  if (s.has_env_api_key || s.has_stored_api_key) {
+    return "$(key)";
+  }
+  return "$(circle-slash)";
+}
+
+function authStatusDescription(s: AuthProviderStatus): string {
+  const parts: string[] = [];
+  if (s.supports_oauth) {
+    switch (s.oauth_status) {
+      case "connected":
+        parts.push("OAuth connected");
+        break;
+      case "expired":
+        parts.push("OAuth expired");
+        break;
+      case "not_authenticated":
+        parts.push("OAuth not authenticated");
+        break;
+      default:
+        parts.push("OAuth unknown");
+    }
+  }
+  if (s.has_env_api_key) {
+    parts.push(`env: ${s.env_var_name || "set"}`);
+  } else if (s.has_stored_api_key) {
+    parts.push("API key stored");
+  } else if (!s.supports_oauth) {
+    parts.push("no credentials");
+  }
+  return parts.join(" | ");
+}
+
+function authStatusDetail(s: AuthProviderStatus): string | undefined {
+  const parts: string[] = [];
+  if (s.env_var_name) {
+    parts.push(`env var: ${s.env_var_name}`);
+  }
+  if (s.preferred_method) {
+    parts.push(`preferred: ${s.preferred_method}`);
+  }
+  return parts.length > 0 ? parts.join(" | ") : undefined;
+}
+
 export async function activate(
   context: vscode.ExtensionContext,
 ): Promise<void> {
@@ -93,6 +366,177 @@ export async function activate(
   );
 
   context.subscriptions.push(
+    vscode.commands.registerCommand("querymt.signInProvider", async () => {
+      if (!acpClient?.isConnected) {
+        vscode.window.showWarningMessage(
+          "QueryMT agent is not connected. Cannot start sign-in.",
+        );
+        return;
+      }
+
+      try {
+        const providerStatus = await pickOAuthProvider(acpClient);
+        if (!providerStatus) {
+          return;
+        }
+
+        const startPayload = await acpClient.extMethod("_querymt/auth/start", {
+          provider: providerStatus.provider,
+        });
+        const start = parseStartFlowResult(startPayload);
+        if (!start.flow_id) {
+          vscode.window.showErrorMessage(
+            `Sign-in for ${providerStatus.provider} failed: missing flow id in response.`,
+          );
+          return;
+        }
+
+        const providerName = start.provider || providerStatus.provider;
+
+        if (start.authorization_url) {
+          const action = await vscode.window.showInformationMessage(
+            `Sign-in started for ${providerName}. Open authorization URL now?`,
+            "Open",
+            "Copy URL",
+            "Skip",
+          );
+          if (action === "Open") {
+            await vscode.env.openExternal(vscode.Uri.parse(start.authorization_url));
+          } else if (action === "Copy URL") {
+            await vscode.env.clipboard.writeText(start.authorization_url);
+          }
+        }
+
+        if (start.flow_kind === "redirect_code") {
+          // Callback server handles completion automatically — poll for status.
+          await waitForRedirectCompletion(acpClient, providerName);
+        } else {
+          // Device/poll flow — user must paste a code.
+          await promptAndCompleteDeviceFlow(
+            acpClient,
+            start.flow_id,
+            providerName,
+          );
+        }
+      } catch (err) {
+        vscode.window.showErrorMessage(
+          `Failed to start sign-in: ${formatError(err)}`,
+        );
+      }
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("querymt.signOutProvider", async () => {
+      if (!acpClient?.isConnected) {
+        vscode.window.showWarningMessage(
+          "QueryMT agent is not connected. Cannot sign out.",
+        );
+        return;
+      }
+
+      try {
+        const providerStatus = await pickOAuthProvider(acpClient);
+        if (!providerStatus) {
+          return;
+        }
+
+        const confirmed = await vscode.window.showWarningMessage(
+          `Sign out from ${providerStatus.provider}?`,
+          { modal: true },
+          "Sign Out",
+        );
+        if (confirmed !== "Sign Out") {
+          return;
+        }
+
+        const payload = await acpClient.extMethod("_querymt/auth/logout", {
+          provider: providerStatus.provider,
+        });
+        const result = parseCompleteOrLogoutResult(payload);
+        if (result.success) {
+          vscode.window.showInformationMessage(
+            result.message || `Signed out from ${providerStatus.provider}.`,
+          );
+          return;
+        }
+
+        vscode.window.showErrorMessage(
+          result.message || `Failed to sign out from ${providerStatus.provider}.`,
+        );
+      } catch (err) {
+        vscode.window.showErrorMessage(`Failed to sign out: ${formatError(err)}`);
+      }
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("querymt.authStatus", async () => {
+      if (!acpClient?.isConnected) {
+        vscode.window.showWarningMessage(
+          "QueryMT agent is not connected. Cannot fetch auth status.",
+        );
+        return;
+      }
+
+      try {
+        const statuses = await fetchAuthStatuses(acpClient);
+        if (statuses.length === 0) {
+          vscode.window.showInformationMessage("No auth-enabled providers found.");
+          return;
+        }
+
+        const items = statuses.map((s) => ({
+          label: `${authStatusIcon(s)} ${s.display_name || s.provider}`,
+          description: authStatusDescription(s),
+          detail: authStatusDetail(s),
+          status: s,
+        }));
+
+        const selected = await vscode.window.showQuickPick(items, {
+          title: "QueryMT: Provider Auth Status",
+          placeHolder: "Select a provider for actions",
+        });
+
+        if (!selected) return;
+
+        const s = selected.status;
+        if (
+          s.supports_oauth &&
+          SUPPORTED_OAUTH_PROVIDERS.has(s.provider) &&
+          s.oauth_status !== "connected"
+        ) {
+          const action = await vscode.window.showInformationMessage(
+            `${s.display_name || s.provider} is not authenticated. Sign in now?`,
+            "Sign In",
+            "Cancel",
+          );
+          if (action === "Sign In") {
+            await vscode.commands.executeCommand("querymt.signInProvider");
+          }
+        } else if (
+          s.supports_oauth &&
+          SUPPORTED_OAUTH_PROVIDERS.has(s.provider) &&
+          s.oauth_status === "connected"
+        ) {
+          const action = await vscode.window.showInformationMessage(
+            `${s.display_name || s.provider} is connected via OAuth.`,
+            "Sign Out",
+            "OK",
+          );
+          if (action === "Sign Out") {
+            await vscode.commands.executeCommand("querymt.signOutProvider");
+          }
+        }
+      } catch (err) {
+        vscode.window.showErrorMessage(
+          `Failed to fetch auth status: ${formatError(err)}`,
+        );
+      }
+    }),
+  );
+
+  context.subscriptions.push(
     vscode.commands.registerCommand("querymt.manageProvider", async () => {
       const config = vscode.workspace.getConfiguration("querymt");
       const items: vscode.QuickPickItem[] = [
@@ -112,6 +556,18 @@ export async function activate(
         {
           label: "Set Config File",
           description: config.get<string>("configFile") || "(none)",
+        },
+        {
+          label: "Sign In to Provider",
+          description: "OAuth login for supported providers",
+        },
+        {
+          label: "Sign Out of Provider",
+          description: "Remove OAuth credentials from agent storage",
+        },
+        {
+          label: "Show Auth Status",
+          description: "List provider authentication states",
         },
       ];
 
@@ -180,6 +636,18 @@ export async function activate(
               vscode.ConfigurationTarget.Global,
             );
           }
+          break;
+        }
+        case "Sign In to Provider": {
+          await vscode.commands.executeCommand("querymt.signInProvider");
+          break;
+        }
+        case "Sign Out of Provider": {
+          await vscode.commands.executeCommand("querymt.signOutProvider");
+          break;
+        }
+        case "Show Auth Status": {
+          await vscode.commands.executeCommand("querymt.authStatus");
           break;
         }
       }

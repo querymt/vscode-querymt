@@ -5,6 +5,30 @@ All notable changes to the QueryMT VS Code extension will be documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.1] - 2026-03-20
+
+### Added
+
+- OAuth sign-in support for Anthropic, Google, Codex, and Kimi providers --
+  new commands `Sign In to Provider`, `Sign Out of Provider`, and
+  `Show Auth Status` accessible from command palette, status bar menu, and
+  Manage Provider quickpick
+- Authentication section in README with API key examples, OAuth quickstart,
+  full provider reference link, and troubleshooting guide
+- Redirect-based OAuth flows (Anthropic, Codex) now complete automatically
+  via the agent's callback server with a cancellable progress notification
+- Device-code OAuth flows prompt immediately for code paste
+- Rich QuickPick for auth status display with per-provider icons, descriptions,
+  and contextual sign-in/sign-out actions
+
+### Fixed
+
+- `extMethod` responses that return `null` (e.g. unsupported agent build or
+  protocol mismatch) no longer crash with `Cannot read properties of null` --
+  all auth parsers now accept `unknown` and degrade gracefully
+- `AcpClient.extMethod` return type narrowed from `Record<string, unknown>` to
+  `unknown` to prevent unsafe property access on null/undefined responses
+
 ## [0.2.0] - 2026-03-19
 
 ### Added

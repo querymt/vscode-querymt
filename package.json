@@ -2,7 +2,7 @@
   "name": "vscode-querymt",
   "displayName": "QueryMT",
   "description": "AI coding agent powered by QueryMT — chat, code generation, and language intelligence via the Agent Client Protocol",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "publisher": "querymt",
   "license": "MIT",
   "repository": {
@@ -52,6 +52,21 @@
       {
         "command": "querymt.manageProvider",
         "title": "Manage Provider",
+        "category": "QueryMT"
+      },
+      {
+        "command": "querymt.signInProvider",
+        "title": "Sign In to Provider",
+        "category": "QueryMT"
+      },
+      {
+        "command": "querymt.signOutProvider",
+        "title": "Sign Out of Provider",
+        "category": "QueryMT"
+      },
+      {
+        "command": "querymt.authStatus",
+        "title": "Show Auth Status",
         "category": "QueryMT"
       },
       {

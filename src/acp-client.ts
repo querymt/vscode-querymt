@@ -355,7 +355,7 @@ export class AcpClient implements vscode.Disposable {
   async extMethod(
     method: string,
     params: Record<string, unknown>,
-  ): Promise<Record<string, unknown>> {
+  ): Promise<unknown> {
     this.ensureConnected();
     return this.connection!.extMethod(method, params);
   }

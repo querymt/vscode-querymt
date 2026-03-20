@@ -71,6 +71,30 @@ export async function run() {
     );
   });
 
+  await test("querymt.signInProvider command should be registered", async () => {
+    const commands = await vscode.commands.getCommands(true);
+    assert.ok(
+      commands.includes("querymt.signInProvider"),
+      "querymt.signInProvider not registered",
+    );
+  });
+
+  await test("querymt.signOutProvider command should be registered", async () => {
+    const commands = await vscode.commands.getCommands(true);
+    assert.ok(
+      commands.includes("querymt.signOutProvider"),
+      "querymt.signOutProvider not registered",
+    );
+  });
+
+  await test("querymt.authStatus command should be registered", async () => {
+    const commands = await vscode.commands.getCommands(true);
+    assert.ok(
+      commands.includes("querymt.authStatus"),
+      "querymt.authStatus not registered",
+    );
+  });
+
   await test("querymt.statusBarMenu command should be registered", async () => {
     const commands = await vscode.commands.getCommands(true);
     assert.ok(

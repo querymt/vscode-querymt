@@ -132,6 +132,18 @@ export function registerStatusBarCommand(
         description: "Configure binary path, model, provider",
       },
       {
+        label: "$(key) Sign In to Provider",
+        description: "Start OAuth sign-in for supported providers",
+      },
+      {
+        label: "$(sign-out) Sign Out of Provider",
+        description: "Disconnect OAuth credentials",
+      },
+      {
+        label: "$(shield) Show Auth Status",
+        description: "List authentication status for providers",
+      },
+      {
         label: "$(sync) Refresh Models",
         description: "Re-fetch available models from all providers",
       },
@@ -150,6 +162,12 @@ export function registerStatusBarCommand(
       await vscode.commands.executeCommand("querymt.showLogs");
     } else if (selected.label.includes("Manage Provider")) {
       await vscode.commands.executeCommand("querymt.manageProvider");
+    } else if (selected.label.includes("Sign In to Provider")) {
+      await vscode.commands.executeCommand("querymt.signInProvider");
+    } else if (selected.label.includes("Sign Out of Provider")) {
+      await vscode.commands.executeCommand("querymt.signOutProvider");
+    } else if (selected.label.includes("Show Auth Status")) {
+      await vscode.commands.executeCommand("querymt.authStatus");
     } else if (selected.label.includes("Refresh Models")) {
       await vscode.commands.executeCommand("querymt.refreshModels");
     }
