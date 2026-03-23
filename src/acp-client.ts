@@ -28,6 +28,8 @@ import {
   type WriteTextFileResponse,
   type ReadTextFileRequest,
   type ReadTextFileResponse,
+  type LoadSessionResponse,
+  type SessionConfigOption,
 } from "@agentclientprotocol/sdk";
 import { createLogger } from "./logger.js";
 import type { WorkspaceQueryParams, WorkspaceQueryResponse } from "./types.js";
@@ -64,6 +66,8 @@ export type ElicitationHandler = (
 export class AcpClient implements vscode.Disposable {
   constructor(private readonly globalStoragePath: string) {}
   private process: ChildProcess | undefined;
+  private lastActiveSessionId: string | undefined;
+  private sessionConfigOptions = new Map<string, SessionConfigOption[]>();
   private connection: ClientSideConnection | undefined;
   private disposables: vscode.Disposable[] = [];
   private readonly log = createLogger("acp");
@@ -308,6 +312,10 @@ export class AcpClient implements vscode.Disposable {
   async newSession(cwd: string): Promise<string> {
     this.ensureConnected();
     const resp = await this.connection!.newSession({ cwd, mcpServers: [] });
+    this.lastActiveSessionId = resp.sessionId;
+    if (resp.configOptions) {
+      this.sessionConfigOptions.set(resp.sessionId, resp.configOptions);
+    }
     return resp.sessionId;
   }
 
@@ -316,6 +324,7 @@ export class AcpClient implements vscode.Disposable {
     contentBlocks: ContentBlock[],
   ): Promise<{ stopReason: string }> {
     this.ensureConnected();
+    this.lastActiveSessionId = sessionId;
     const resp = await this.connection!.prompt({
       sessionId,
       prompt: contentBlocks,
@@ -333,11 +342,16 @@ export class AcpClient implements vscode.Disposable {
     return this.connection!.listSessions({});
   }
 
-  async loadSession(sessionId: string): Promise<unknown> {
+  async loadSession(sessionId: string): Promise<LoadSessionResponse> {
     this.ensureConnected();
     const cwd =
       vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
-    return this.connection!.loadSession({ sessionId, cwd, mcpServers: [] });
+    const resp = await this.connection!.loadSession({ sessionId, cwd, mcpServers: [] });
+    this.lastActiveSessionId = sessionId;
+    if (resp.configOptions) {
+      this.sessionConfigOptions.set(sessionId, resp.configOptions);
+    }
+    return resp;
   }
 
   /**
@@ -346,7 +360,39 @@ export class AcpClient implements vscode.Disposable {
    */
   async setModel(sessionId: string, modelId: string): Promise<void> {
     this.ensureConnected();
+    this.lastActiveSessionId = sessionId;
     await this.connection!.unstable_setSessionModel({ sessionId, modelId });
+  }
+
+  async setSessionConfigOption(
+    sessionId: string,
+    configId: string,
+    value: string,
+  ): Promise<SessionConfigOption[]> {
+    this.ensureConnected();
+    this.lastActiveSessionId = sessionId;
+    const resp = await this.connection!.setSessionConfigOption({
+      sessionId,
+      configId,
+      value,
+    });
+    this.sessionConfigOptions.set(sessionId, resp.configOptions);
+    return resp.configOptions;
+  }
+
+  getLastActiveSessionId(): string | undefined {
+    return this.lastActiveSessionId;
+  }
+
+  getSessionConfigOptions(sessionId: string): SessionConfigOption[] {
+    return this.sessionConfigOptions.get(sessionId) ?? [];
+  }
+
+  updateSessionConfigOptions(
+    sessionId: string,
+    configOptions: SessionConfigOption[],
+  ): void {
+    this.sessionConfigOptions.set(sessionId, configOptions);
   }
 
   /**

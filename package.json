@@ -2,7 +2,7 @@
   "name": "vscode-querymt",
   "displayName": "QueryMT",
   "description": "AI coding agent powered by QueryMT — chat, code generation, and language intelligence via the Agent Client Protocol",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "publisher": "querymt",
   "license": "MIT",
   "repository": {
@@ -38,7 +38,17 @@
         "name": "querymt",
         "fullName": "QueryMT Agent",
         "description": "AI coding agent powered by QueryMT",
-        "isDefault": false
+        "isDefault": false,
+        "commands": [
+          {
+            "name": "mode",
+            "description": "Set the session AgentMode"
+          },
+          {
+            "name": "effort",
+            "description": "Set the session ReasoningEffort"
+          }
+        ]
       }
     ],
     "languageModelChatProviders": [
@@ -85,8 +95,23 @@
         "category": "QueryMT"
       },
       {
+        "command": "querymt.setMode",
+        "title": "Set Session Mode",
+        "category": "QueryMT"
+      },
+      {
+        "command": "querymt.setReasoningEffort",
+        "title": "Set Reasoning Effort",
+        "category": "QueryMT"
+      },
+      {
         "command": "querymt.refreshModels",
         "title": "Refresh Models",
+        "category": "QueryMT"
+      },
+      {
+        "command": "querymt.updatePlugins",
+        "title": "Update Plugins",
         "category": "QueryMT"
       }
     ],

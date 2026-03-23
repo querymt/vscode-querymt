@@ -10,6 +10,7 @@
  */
 
 import * as vscode from "vscode";
+import type { SessionConfigOption } from "@agentclientprotocol/sdk";
 import { AcpClient } from "./acp-client.js";
 import { initLogger, createLogger, formatError } from "./logger.js";
 import { registerChatParticipant } from "./chat-participant.js";
@@ -163,11 +164,11 @@ async function pickOAuthProvider(client: AcpClient): Promise<AuthProviderStatus 
 async function waitForRedirectCompletion(
   client: AcpClient,
   provider: string,
-): Promise<void> {
+): Promise<"connected" | "cancelled" | "timed_out"> {
   const POLL_INTERVAL_MS = 2000;
   const MAX_POLLS = 60; // 2 minutes
 
-  await vscode.window.withProgress(
+  return vscode.window.withProgress(
     {
       location: vscode.ProgressLocation.Notification,
       title: `Waiting for ${provider} sign-in to complete...`,
@@ -176,10 +177,7 @@ async function waitForRedirectCompletion(
     async (_progress, token) => {
       for (let i = 0; i < MAX_POLLS; i++) {
         if (token.isCancellationRequested) {
-          vscode.window.showInformationMessage(
-            `Sign-in for ${provider} cancelled. Run 'QueryMT: Sign In to Provider' to try again.`,
-          );
-          return;
+          return "cancelled";
         }
 
         const statuses = await fetchAuthStatuses(client);
@@ -188,35 +186,33 @@ async function waitForRedirectCompletion(
           vscode.window.showInformationMessage(
             `Successfully authenticated with ${match.display_name || provider}.`,
           );
-          return;
+          return "connected";
         }
 
         await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
       }
 
-      vscode.window.showWarningMessage(
-        `Sign-in for ${provider} timed out. Check 'QueryMT: Show Auth Status' or try again.`,
-      );
+      return "timed_out";
     },
   );
 }
 
-async function promptAndCompleteDeviceFlow(
+async function promptAndCompleteOAuthFlow(
   client: AcpClient,
   flowId: string,
   provider: string,
-): Promise<void> {
+): Promise<boolean> {
   const response = await vscode.window.showInputBox({
     prompt:
-      "Paste the authorization code or device code to complete sign-in",
-    placeHolder: "code",
+      "Paste the callback URL, authorization code, or device code to complete sign-in",
+    placeHolder: "callback URL or code",
     ignoreFocusOut: true,
   });
   if (response === undefined || response.trim().length === 0) {
     vscode.window.showInformationMessage(
       `Sign-in for ${provider} cancelled.`,
     );
-    return;
+    return false;
   }
 
   const payload = await client.extMethod("_querymt/auth/complete", {
@@ -228,12 +224,13 @@ async function promptAndCompleteDeviceFlow(
     vscode.window.showInformationMessage(
       result.message || `Successfully authenticated with ${provider}.`,
     );
-    return;
+    return true;
   }
 
   vscode.window.showErrorMessage(
     result.message || `Failed to complete sign-in for ${provider}.`,
   );
+  return false;
 }
 
 function authStatusIcon(s: AuthProviderStatus): string {
@@ -291,6 +288,91 @@ function authStatusDetail(s: AuthProviderStatus): string | undefined {
     parts.push(`preferred: ${s.preferred_method}`);
   }
   return parts.length > 0 ? parts.join(" | ") : undefined;
+}
+
+function getSelectConfigOptions(
+  options: SessionConfigOption[],
+  configId: string,
+): Array<{ label: string; value: string; description?: string }> {
+  let config: SessionConfigOption | undefined;
+  for (const option of options) {
+    if (option.id === configId && option.type === "select") {
+      config = option;
+      break;
+    }
+  }
+  if (!config || config.type !== "select") {
+    return [];
+  }
+
+  const result: Array<{ label: string; value: string; description?: string }> = [];
+  for (const optionOrGroup of config.options) {
+    if ("options" in optionOrGroup) {
+      for (const grouped of optionOrGroup.options) {
+        result.push({
+          label: grouped.name,
+          value: grouped.value,
+          description: grouped.description ?? undefined,
+        });
+      }
+    } else {
+      result.push({
+        label: optionOrGroup.name,
+        value: optionOrGroup.value,
+        description: optionOrGroup.description ?? undefined,
+      });
+    }
+  }
+
+  return result;
+}
+
+async function pickAndSetSessionSelectOption(
+  client: AcpClient,
+  configId: string,
+  label: string,
+): Promise<void> {
+  const sessionId = client.getLastActiveSessionId();
+  if (!sessionId) {
+    vscode.window.showInformationMessage(
+      `No active QueryMT session. Start a chat first, then set ${label.toLowerCase()}.`,
+    );
+    return;
+  }
+
+  const options = getSelectConfigOptions(
+    client.getSessionConfigOptions(sessionId),
+    configId,
+  );
+  if (options.length === 0) {
+    vscode.window.showWarningMessage(
+      `${label} is not available for the active session.`,
+    );
+    return;
+  }
+
+  const selected = await vscode.window.showQuickPick(
+    options.map((o) => ({
+      label: o.label,
+      description: o.description,
+      detail: o.value,
+      value: o.value,
+    })),
+    {
+      title: `QueryMT: Set ${label}`,
+      placeHolder: `Select ${label.toLowerCase()} for the active chat session`,
+      ignoreFocusOut: true,
+    },
+  );
+
+  if (!selected) {
+    return;
+  }
+
+  await client.setSessionConfigOption(sessionId, configId, selected.value);
+  vscode.window.showInformationMessage(
+    `${label} set to ${selected.label}.`,
+  );
 }
 
 export async function activate(
@@ -366,6 +448,46 @@ export async function activate(
   );
 
   context.subscriptions.push(
+    vscode.commands.registerCommand("querymt.setMode", async () => {
+      if (!acpClient?.isConnected) {
+        vscode.window.showWarningMessage(
+          "QueryMT agent is not connected. Start a chat request first.",
+        );
+        return;
+      }
+      try {
+        await pickAndSetSessionSelectOption(acpClient, "mode", "Mode");
+      } catch (err) {
+        vscode.window.showErrorMessage(
+          `Failed to set mode: ${formatError(err)}`,
+        );
+      }
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("querymt.setReasoningEffort", async () => {
+      if (!acpClient?.isConnected) {
+        vscode.window.showWarningMessage(
+          "QueryMT agent is not connected. Start a chat request first.",
+        );
+        return;
+      }
+      try {
+        await pickAndSetSessionSelectOption(
+          acpClient,
+          "reasoning_effort",
+          "Reasoning Effort",
+        );
+      } catch (err) {
+        vscode.window.showErrorMessage(
+          `Failed to set reasoning effort: ${formatError(err)}`,
+        );
+      }
+    }),
+  );
+
+  context.subscriptions.push(
     vscode.commands.registerCommand("querymt.signInProvider", async () => {
       if (!acpClient?.isConnected) {
         vscode.window.showWarningMessage(
@@ -408,15 +530,45 @@ export async function activate(
         }
 
         if (start.flow_kind === "redirect_code") {
-          // Callback server handles completion automatically — poll for status.
-          await waitForRedirectCompletion(acpClient, providerName);
+          const redirectAction = await vscode.window.showInformationMessage(
+            `Complete ${providerName} sign-in automatically, or paste callback URL/code manually?`,
+            "Wait for Automatic Completion",
+            "Paste Callback URL or Code",
+          );
+
+          if (redirectAction === "Paste Callback URL or Code") {
+            await promptAndCompleteOAuthFlow(acpClient, start.flow_id, providerName);
+            return;
+          }
+
+          const completion = await waitForRedirectCompletion(acpClient, providerName);
+          if (completion === "connected") {
+            return;
+          }
+
+          if (completion === "cancelled") {
+            const cancelledAction = await vscode.window.showInformationMessage(
+              `Automatic sign-in for ${providerName} was cancelled. Paste callback URL/code instead?`,
+              "Paste Callback URL or Code",
+              "Cancel",
+            );
+            if (cancelledAction === "Paste Callback URL or Code") {
+              await promptAndCompleteOAuthFlow(acpClient, start.flow_id, providerName);
+            }
+            return;
+          }
+
+          const timedOutAction = await vscode.window.showWarningMessage(
+            `Automatic sign-in for ${providerName} timed out. Paste callback URL/code instead?`,
+            "Paste Callback URL or Code",
+            "Cancel",
+          );
+          if (timedOutAction === "Paste Callback URL or Code") {
+            await promptAndCompleteOAuthFlow(acpClient, start.flow_id, providerName);
+          }
         } else {
           // Device/poll flow — user must paste a code.
-          await promptAndCompleteDeviceFlow(
-            acpClient,
-            start.flow_id,
-            providerName,
-          );
+          await promptAndCompleteOAuthFlow(acpClient, start.flow_id, providerName);
         }
       } catch (err) {
         vscode.window.showErrorMessage(
@@ -569,6 +721,10 @@ export async function activate(
           label: "Show Auth Status",
           description: "List provider authentication states",
         },
+        {
+          label: "Update Plugins",
+          description: "Force-update all OCI provider plugins",
+        },
       ];
 
       const selected = await vscode.window.showQuickPick(items, {
@@ -650,6 +806,10 @@ export async function activate(
           await vscode.commands.executeCommand("querymt.authStatus");
           break;
         }
+        case "Update Plugins": {
+          await vscode.commands.executeCommand("querymt.updatePlugins");
+          break;
+        }
       }
     }),
   );
@@ -669,6 +829,53 @@ export async function activate(
       } catch (err) {
         vscode.window.showErrorMessage(
           `Failed to refresh models: ${formatError(err)}`,
+        );
+      }
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("querymt.updatePlugins", async () => {
+      if (!acpClient?.isConnected) {
+        vscode.window.showWarningMessage(
+          "QueryMT agent is not connected. Cannot update plugins.",
+        );
+        return;
+      }
+      try {
+        const result = await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: "QueryMT: Updating plugins...",
+            cancellable: false,
+          },
+          async () => {
+            return acpClient!.extMethod("_querymt/updatePlugins", {});
+          },
+        );
+
+        const obj = asObject(result);
+        const results = Array.isArray(obj?.results) ? obj!.results : [];
+        const succeeded = results.filter((r: unknown) => asObject(r)?.success === true).length;
+        const failed = results.filter((r: unknown) => asObject(r)?.success !== true).length;
+
+        if (failed === 0) {
+          vscode.window.showInformationMessage(
+            `Plugin update complete: ${succeeded} plugin(s) updated.`,
+          );
+        } else {
+          const failedNames = results
+            .map((r: unknown) => asObject(r))
+            .filter((r): r is Record<string, unknown> => !!r && r.success !== true)
+            .map((r) => `${r.plugin_name}: ${r.message || "unknown error"}`)
+            .join("; ");
+          vscode.window.showWarningMessage(
+            `Plugin update: ${succeeded} succeeded, ${failed} failed. ${failedNames}`,
+          );
+        }
+      } catch (err) {
+        vscode.window.showErrorMessage(
+          `Failed to update plugins: ${formatError(err)}`,
         );
       }
     }),

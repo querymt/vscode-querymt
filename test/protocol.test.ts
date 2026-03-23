@@ -347,6 +347,124 @@ describeWithAgent("ACP protocol integration", () => {
     expect(session2Updates.length).toBe(0);
   });
 
+  it("should return configOptions from newSession", async () => {
+    await harness.connection.initialize({
+      protocolVersion: PROTOCOL_VERSION,
+      clientInfo: { name: "test-harness", version: "0.0.1" },
+      clientCapabilities: {
+        fs: { readTextFile: true, writeTextFile: true },
+      },
+    });
+
+    const session = await harness.connection.newSession({
+      cwd: process.cwd(),
+      mcpServers: [],
+    });
+
+    expect(session.sessionId).toBeTruthy();
+    expect(session.configOptions).toBeDefined();
+    expect(Array.isArray(session.configOptions)).toBe(true);
+    expect(session.configOptions!.length).toBeGreaterThanOrEqual(2);
+
+    const modeOption = session.configOptions!.find(
+      (o: any) => o.id === "mode",
+    );
+    expect(modeOption).toBeDefined();
+    expect(modeOption!.type).toBe("select");
+
+    const effortOption = session.configOptions!.find(
+      (o: any) => o.id === "reasoning_effort",
+    );
+    expect(effortOption).toBeDefined();
+    expect(effortOption!.type).toBe("select");
+  });
+
+  it("should set session config option: mode", async () => {
+    await harness.connection.initialize({
+      protocolVersion: PROTOCOL_VERSION,
+      clientInfo: { name: "test-harness", version: "0.0.1" },
+      clientCapabilities: {
+        fs: { readTextFile: true, writeTextFile: true },
+      },
+    });
+
+    const session = await harness.connection.newSession({
+      cwd: process.cwd(),
+      mcpServers: [],
+    });
+
+    const resp = await harness.connection.setSessionConfigOption({
+      sessionId: session.sessionId,
+      configId: "mode",
+      value: "plan",
+    });
+
+    expect(resp.configOptions).toBeDefined();
+    expect(resp.configOptions.length).toBeGreaterThanOrEqual(2);
+
+    const modeOption = resp.configOptions.find(
+      (o: any) => o.id === "mode",
+    );
+    expect(modeOption).toBeDefined();
+    expect(modeOption!.type).toBe("select");
+    // The current value should now be "plan"
+    expect((modeOption as any).currentValue).toBe("plan");
+  });
+
+  it("should set session config option: reasoning_effort", async () => {
+    await harness.connection.initialize({
+      protocolVersion: PROTOCOL_VERSION,
+      clientInfo: { name: "test-harness", version: "0.0.1" },
+      clientCapabilities: {
+        fs: { readTextFile: true, writeTextFile: true },
+      },
+    });
+
+    const session = await harness.connection.newSession({
+      cwd: process.cwd(),
+      mcpServers: [],
+    });
+
+    const resp = await harness.connection.setSessionConfigOption({
+      sessionId: session.sessionId,
+      configId: "reasoning_effort",
+      value: "high",
+    });
+
+    expect(resp.configOptions).toBeDefined();
+    expect(resp.configOptions.length).toBeGreaterThanOrEqual(2);
+
+    const effortOption = resp.configOptions.find(
+      (o: any) => o.id === "reasoning_effort",
+    );
+    expect(effortOption).toBeDefined();
+    expect(effortOption!.type).toBe("select");
+    expect((effortOption as any).currentValue).toBe("high");
+  });
+
+  it("should reject unknown config option id", async () => {
+    await harness.connection.initialize({
+      protocolVersion: PROTOCOL_VERSION,
+      clientInfo: { name: "test-harness", version: "0.0.1" },
+      clientCapabilities: {
+        fs: { readTextFile: true, writeTextFile: true },
+      },
+    });
+
+    const session = await harness.connection.newSession({
+      cwd: process.cwd(),
+      mcpServers: [],
+    });
+
+    await expect(
+      harness.connection.setSessionConfigOption({
+        sessionId: session.sessionId,
+        configId: "nonexistent",
+        value: "whatever",
+      }),
+    ).rejects.toThrow();
+  });
+
   it("should exit cleanly on SIGTERM", async () => {
     await harness.connection.initialize({
       protocolVersion: PROTOCOL_VERSION,

@@ -13,6 +13,7 @@ import type {
   SessionUpdate,
   RequestPermissionRequest,
   RequestPermissionResponse,
+  SessionConfigOption,
 } from "@agentclientprotocol/sdk";
 
 const log = createLogger("chat");
@@ -44,6 +45,90 @@ export function registerChatParticipant(
 
   // Last model set per session (to avoid redundant setModel calls)
   const sessionModels = new Map<string, string>();
+
+  const selectOptionItems = (
+    options: SessionConfigOption[],
+    configId: string,
+  ): Array<{ label: string; value: string; description?: string }> => {
+    let config: SessionConfigOption | undefined;
+    for (const option of options) {
+      if (option.id === configId && option.type === "select") {
+        config = option;
+        break;
+      }
+    }
+    if (!config || config.type !== "select") {
+      return [];
+    }
+
+    const result: Array<{ label: string; value: string; description?: string }> = [];
+    for (const optionOrGroup of config.options) {
+      if ("options" in optionOrGroup) {
+        for (const grouped of optionOrGroup.options) {
+          result.push({
+            label: grouped.name,
+            value: grouped.value,
+            description: grouped.description ?? undefined,
+          });
+        }
+      } else {
+        result.push({
+          label: optionOrGroup.name,
+          value: optionOrGroup.value,
+          description: optionOrGroup.description ?? undefined,
+        });
+      }
+    }
+    return result;
+  };
+
+  const setSelectConfigOption = async (
+    sessionId: string,
+    configId: string,
+    label: string,
+    promptValue: string,
+    response: vscode.ChatResponseStream,
+  ): Promise<boolean> => {
+    const options = selectOptionItems(
+      acpClient.getSessionConfigOptions(sessionId),
+      configId,
+    );
+    if (options.length === 0) {
+      response.markdown(`**${label} is not available in this session.**`);
+      return true;
+    }
+
+    const normalizedPrompt = promptValue.trim().toLowerCase();
+    let selected = options.find(
+      (o) => o.value.toLowerCase() === normalizedPrompt || o.label.toLowerCase() === normalizedPrompt,
+    );
+
+    if (!selected) {
+      const picked = await vscode.window.showQuickPick(
+        options.map((o) => ({
+          label: o.label,
+          description: o.description,
+          detail: o.value,
+          value: o.value,
+        })),
+        {
+          title: `QueryMT: Set ${label}`,
+          placeHolder: `Select ${label.toLowerCase()} for this chat session`,
+          ignoreFocusOut: true,
+        },
+      );
+
+      if (!picked) {
+        response.markdown(`*${label} unchanged.*`);
+        return true;
+      }
+      selected = { label: picked.label, value: picked.value, description: picked.description };
+    }
+
+    await acpClient.setSessionConfigOption(sessionId, configId, selected.value);
+    response.markdown(`Set **${label}** to **${selected.label}**.`);
+    return true;
+  };
 
   // ── Chat request handler ──
 
@@ -132,6 +217,32 @@ export function registerChatParticipant(
       }
     }
 
+    const command = request.command?.toLowerCase();
+    if (command === "mode") {
+      const handled = await setSelectConfigOption(
+        sessionId,
+        "mode",
+        "Mode",
+        request.prompt,
+        response,
+      );
+      if (handled) {
+        return { metadata: { sessionId, command: "mode" } };
+      }
+    }
+    if (command === "effort" || command === "reasoning" || command === "reasoning-effort") {
+      const handled = await setSelectConfigOption(
+        sessionId,
+        "reasoning_effort",
+        "Reasoning Effort",
+        request.prompt,
+        response,
+      );
+      if (handled) {
+        return { metadata: { sessionId, command: "effort" } };
+      }
+    }
+
     // Register this stream as active so sessionUpdate events can stream to it
     activeStreams.set(sessionId, { stream: response, token });
 
@@ -197,6 +308,14 @@ export function registerChatParticipant(
       log.trace(
         `sessionUpdate: session=${params.sessionId} type=${params.update.sessionUpdate}`,
       );
+
+      if (params.update.sessionUpdate === "config_option_update") {
+        acpClient.updateSessionConfigOptions(
+          params.sessionId,
+          params.update.configOptions,
+        );
+      }
+
       const entry = activeStreams.get(params.sessionId);
       if (!entry) {
         log.debug(
@@ -244,12 +363,19 @@ export function registerChatParticipant(
         | string
         | undefined;
       if (!sessionId) return [];
+
+      const followups: vscode.ChatFollowup[] = [];
       const commands = sessionCommands.get(sessionId);
-      if (!commands || commands.length === 0) return [];
-      return commands.map((cmd) => ({
-        prompt: cmd.name,
-        label: cmd.description,
-      }));
+      if (commands && commands.length > 0) {
+        followups.push(
+          ...commands.map((cmd) => ({
+            prompt: cmd.name,
+            label: cmd.description,
+          })),
+        );
+      }
+
+      return followups;
     },
   };
 

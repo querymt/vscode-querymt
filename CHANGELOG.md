@@ -5,6 +5,35 @@ All notable changes to the QueryMT VS Code extension will be documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.2] - 2026-03-23
+
+### Added
+
+- `Set Session Mode` command (`querymt.setMode`) and `/mode` slash command —
+  change the agent mode (e.g. code, plan, architect) for the active chat session
+  via QuickPick or inline in chat
+- `Set Reasoning Effort` command (`querymt.setReasoningEffort`) and `/effort`
+  slash command (aliases: `/reasoning`, `/reasoning-effort`) — adjust reasoning
+  effort for the active session
+- `Update Plugins` command (`querymt.updatePlugins`) — force-update all OCI
+  provider plugins with a progress notification and per-plugin result summary
+- Session config options (`configOptions`) fetched from `newSession` and
+  `loadSession` responses and cached per session; kept in sync via
+  `config_option_update` session events
+- Chat participant declares `mode` and `effort` slash commands in `package.json`
+- `Set Mode`, `Set Reasoning Effort`, and `Update Plugins` entries in the
+  status bar menu and Manage Provider quickpick
+
+### Changed
+
+- `waitForRedirectCompletion` returns a typed result
+  (`"connected" | "cancelled" | "timed_out"`) instead of `void`, enabling
+  fallback to manual callback-URL/code paste on cancellation or timeout
+- `promptAndCompleteDeviceFlow` renamed to `promptAndCompleteOAuthFlow` and now
+  accepts a callback URL in addition to a plain authorization code
+- `AcpClient.loadSession` return type tightened from `unknown` to
+  `LoadSessionResponse`
+
 ## [0.2.1] - 2026-03-20
 
 ### Added

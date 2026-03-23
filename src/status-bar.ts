@@ -144,6 +144,14 @@ export function registerStatusBarCommand(
         description: "List authentication status for providers",
       },
       {
+        label: "$(symbol-enum) Set Mode",
+        description: "Set AgentMode for the active session",
+      },
+      {
+        label: "$(pulse) Set Reasoning Effort",
+        description: "Set ReasoningEffort for the active session",
+      },
+      {
         label: "$(sync) Refresh Models",
         description: "Re-fetch available models from all providers",
       },
@@ -168,6 +176,10 @@ export function registerStatusBarCommand(
       await vscode.commands.executeCommand("querymt.signOutProvider");
     } else if (selected.label.includes("Show Auth Status")) {
       await vscode.commands.executeCommand("querymt.authStatus");
+    } else if (selected.label.includes("Set Mode")) {
+      await vscode.commands.executeCommand("querymt.setMode");
+    } else if (selected.label.includes("Set Reasoning Effort")) {
+      await vscode.commands.executeCommand("querymt.setReasoningEffort");
     } else if (selected.label.includes("Refresh Models")) {
       await vscode.commands.executeCommand("querymt.refreshModels");
     }
