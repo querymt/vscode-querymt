@@ -155,6 +155,10 @@ export function registerStatusBarCommand(
         label: "$(sync) Refresh Models",
         description: "Re-fetch available models from all providers",
       },
+      {
+        label: "$(cloud-download) Upgrade Agent",
+        description: "Check for and install qmtcode updates",
+      },
     ];
 
     const selected = await vscode.window.showQuickPick(items, {
@@ -182,6 +186,8 @@ export function registerStatusBarCommand(
       await vscode.commands.executeCommand("querymt.setReasoningEffort");
     } else if (selected.label.includes("Refresh Models")) {
       await vscode.commands.executeCommand("querymt.refreshModels");
+    } else if (selected.label.includes("Upgrade Agent")) {
+      await vscode.commands.executeCommand("querymt.upgradeAgent");
     }
   });
 }

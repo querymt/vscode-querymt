@@ -2,7 +2,7 @@
   "name": "vscode-querymt",
   "displayName": "QueryMT",
   "description": "AI coding agent powered by QueryMT — chat, code generation, and language intelligence via the Agent Client Protocol",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "publisher": "querymt",
   "license": "MIT",
   "repository": {
@@ -113,6 +113,11 @@
         "command": "querymt.updatePlugins",
         "title": "Update Plugins",
         "category": "QueryMT"
+      },
+      {
+        "command": "querymt.upgradeAgent",
+        "title": "Upgrade Agent",
+        "category": "QueryMT"
       }
     ],
     "configuration": {
@@ -187,6 +192,12 @@
           ],
           "markdownDescription": "Release channel used when auto-downloading `qmtcode`",
           "order": 8
+        },
+        "querymt.checkForUpdates": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Automatically check for `qmtcode` updates when VS Code starts and notify if a newer version is available",
+          "order": 9
         }
       }
     }
@@ -204,10 +215,12 @@
     "test:extension": "node test/extension-host/run.mjs"
   },
   "dependencies": {
-    "@agentclientprotocol/sdk": "^0.16.1"
+    "@agentclientprotocol/sdk": "^0.16.1",
+    "semver": "^7.7.4"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "@types/semver": "^7.7.1",
     "@types/vscode": "^1.99.0",
     "@vscode/test-electron": "^2.5.2",
     "@vscode/vsce": "^3.0.0",

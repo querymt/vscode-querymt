@@ -61,6 +61,10 @@ export type ElicitationHandler = (
   params: ElicitationParams,
 ) => Promise<ElicitationResponse>;
 
+// ── Binary source tracking ──
+
+export type BinarySource = "setting" | "bundled" | "path" | "downloaded" | "auto-downloaded";
+
 // ── AcpClient ──
 
 export class AcpClient implements vscode.Disposable {
@@ -71,6 +75,8 @@ export class AcpClient implements vscode.Disposable {
   private connection: ClientSideConnection | undefined;
   private disposables: vscode.Disposable[] = [];
   private readonly log = createLogger("acp");
+  private _binarySource: BinarySource | undefined;
+  private _resolvedBinaryPath: string | undefined;
 
   // Event handlers registered by other modules (chat participant, etc.)
   private sessionUpdateHandlers: SessionUpdateHandler[] = [];
@@ -171,12 +177,18 @@ export class AcpClient implements vscode.Disposable {
    * 5. Auto-download a matching binary if enabled
    */
   private async resolveBinaryPath(): Promise<string> {
+    const resolved = (path: string, source: BinarySource): string => {
+      this._binarySource = source;
+      this._resolvedBinaryPath = path;
+      return path;
+    };
+
     // 1. User setting
     const config = vscode.workspace.getConfiguration("querymt");
     const configured = config.get<string>("binaryPath");
     if (configured && configured.length > 0) {
       if (existsSync(configured)) {
-        return configured;
+        return resolved(configured, "setting");
       }
       this.log.warn(`Configured binary path not found: ${configured}, falling back to discovery`);
     }
@@ -188,7 +200,7 @@ export class AcpClient implements vscode.Disposable {
         const bundledPath = join(extensionPath, "bin", candidate);
         if (existsSync(bundledPath)) {
           this.log.debug(`Using bundled binary: ${bundledPath}`);
-          return bundledPath;
+          return resolved(bundledPath, "bundled");
         }
       }
     }
@@ -197,14 +209,14 @@ export class AcpClient implements vscode.Disposable {
     const pathBinary = findOnPath("qmtcode");
     if (pathBinary) {
       this.log.debug(`Using binary from PATH: ${pathBinary}`);
-      return pathBinary;
+      return resolved(pathBinary, "path");
     }
 
     // 4. Reuse a previously downloaded binary from global storage
     const downloaded = getStoredBinaryPath(this.globalStoragePath);
     if (downloaded) {
       this.log.debug(`Using downloaded binary: ${downloaded}`);
-      return downloaded;
+      return resolved(downloaded, "downloaded");
     }
 
     // 5. Auto-download if enabled
@@ -229,7 +241,7 @@ export class AcpClient implements vscode.Disposable {
             );
           },
         );
-        return downloadedPath;
+        return resolved(downloadedPath, "auto-downloaded");
       } catch (err) {
         this.log.error("Automatic qmtcode download failed", err);
       }
@@ -269,6 +281,30 @@ export class AcpClient implements vscode.Disposable {
     this.restartCount = 0;
     this.kill();
     await this.start();
+  }
+
+  /**
+   * Stop the agent process without restarting.
+   * Used by the upgrade flow to safely replace the binary before restarting.
+   */
+  stop(): void {
+    this.restartCount = Number.MAX_SAFE_INTEGER; // prevent auto-restart
+    this.kill();
+  }
+
+  /** The source from which the current binary was resolved. */
+  get binarySource(): BinarySource | undefined {
+    return this._binarySource;
+  }
+
+  /** The resolved path to the currently-used qmtcode binary. */
+  get resolvedBinaryPath(): string | undefined {
+    return this._resolvedBinaryPath;
+  }
+
+  /** The extension's global storage path. */
+  get storagePath(): string {
+    return this.globalStoragePath;
   }
 
   private kill(): void {

@@ -17,6 +17,11 @@ import { registerChatParticipant } from "./chat-participant.js";
 import { QueryMTModelProvider } from "./model-provider.js";
 import { handleWorkspaceQuery } from "./workspace-query.js";
 import { StatusBar, registerStatusBarCommand } from "./status-bar.js";
+import {
+  checkForUpdate,
+  ensureDownloadedBinary,
+  type ReleaseChannel,
+} from "./binary-manager.js";
 import type { WorkspaceQueryParams } from "./types.js";
 
 let acpClient: AcpClient | undefined;
@@ -725,6 +730,10 @@ export async function activate(
           label: "Update Plugins",
           description: "Force-update all OCI provider plugins",
         },
+        {
+          label: "Upgrade Agent",
+          description: "Check for and install qmtcode updates",
+        },
       ];
 
       const selected = await vscode.window.showQuickPick(items, {
@@ -810,6 +819,10 @@ export async function activate(
           await vscode.commands.executeCommand("querymt.updatePlugins");
           break;
         }
+        case "Upgrade Agent": {
+          await vscode.commands.executeCommand("querymt.upgradeAgent");
+          break;
+        }
       }
     }),
   );
@@ -881,6 +894,137 @@ export async function activate(
     }),
   );
 
+  context.subscriptions.push(
+    vscode.commands.registerCommand("querymt.upgradeAgent", async () => {
+      const config = vscode.workspace.getConfiguration("querymt");
+      const channelSetting = config.get<string>("channel", "stable");
+      const channel: ReleaseChannel = channelSetting === "nightly" ? "nightly" : "stable";
+      const source = acpClient?.binarySource;
+
+      // If the binary comes from PATH, bundled, or a user-configured path,
+      // warn the user and offer to download a managed copy instead.
+      if (source === "path" || source === "bundled" || source === "setting") {
+        const sourceLabel =
+          source === "path"
+            ? "PATH"
+            : source === "bundled"
+              ? "the extension bundle"
+              : "a custom setting";
+
+        const choice = await vscode.window.showInformationMessage(
+          `qmtcode is currently loaded from ${sourceLabel}. You can download a managed copy that the extension will use going forward, or update via your package manager.`,
+          "Download Managed Copy",
+          "Cancel",
+        );
+        if (choice !== "Download Managed Copy") {
+          return;
+        }
+
+        // Proceed directly to download (skip version comparison — we're
+        // switching from an externally-managed binary to a managed one).
+        try {
+          acpClient?.stop();
+          statusBar.update("connecting");
+
+          const downloadedPath = await vscode.window.withProgress(
+            {
+              location: vscode.ProgressLocation.Notification,
+              title: "QueryMT: Upgrading Agent",
+              cancellable: false,
+            },
+            async (progress) => {
+              return ensureDownloadedBinary(
+                context.globalStorageUri.fsPath,
+                channel,
+                progress,
+                log,
+              );
+            },
+          );
+
+          log.info(`Upgrade downloaded binary to: ${downloadedPath}`);
+          await acpClient?.start();
+          statusBar.update("connected");
+          vscode.window.showInformationMessage(
+            "qmtcode managed copy downloaded and agent restarted.",
+          );
+        } catch (err) {
+          statusBar.update("error");
+          vscode.window.showErrorMessage(
+            `Failed to download qmtcode: ${formatError(err)}`,
+          );
+        }
+        return;
+      }
+
+      // For downloaded/auto-downloaded binaries, check if there's a newer version.
+      try {
+        const result = await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: "QueryMT: Checking for updates...",
+            cancellable: false,
+          },
+          async () => {
+            return checkForUpdate(
+              context.globalStorageUri.fsPath,
+              channel,
+              acpClient?.resolvedBinaryPath,
+              log,
+            );
+          },
+        );
+
+        if (!result.updateAvailable) {
+          vscode.window.showInformationMessage(
+            `qmtcode is up to date (${result.currentVersion}).`,
+          );
+          return;
+        }
+
+        const confirm = await vscode.window.showInformationMessage(
+          `A new version of qmtcode is available: ${result.latestVersion} (current: ${result.currentVersion}). Upgrade now?`,
+          "Upgrade",
+          "Cancel",
+        );
+        if (confirm !== "Upgrade") {
+          return;
+        }
+
+        acpClient?.stop();
+        statusBar.update("connecting");
+
+        const downloadedPath = await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: `QueryMT: Upgrading to ${result.latestVersion}...`,
+            cancellable: false,
+          },
+          async (progress) => {
+            return ensureDownloadedBinary(
+              context.globalStorageUri.fsPath,
+              channel,
+              progress,
+              log,
+            );
+          },
+        );
+
+        log.info(`Upgraded qmtcode to ${result.latestVersion}: ${downloadedPath}`);
+        await acpClient?.start();
+        statusBar.update("connected");
+        vscode.window.showInformationMessage(
+          `qmtcode upgraded to ${result.latestVersion}. Agent restarted.`,
+        );
+      } catch (err) {
+        statusBar.update("error");
+        vscode.window.showErrorMessage(
+          `Failed to upgrade qmtcode: ${formatError(err)}`,
+        );
+      }
+    }),
+  );
+
   // ── Auto-start the agent ──
   // The agent is started lazily when the first chat message arrives,
   // but we can also attempt to start it eagerly if autoStart is enabled.
@@ -898,6 +1042,43 @@ export async function activate(
         statusBar.update("error");
         log.error(`Agent auto-start failed (will retry on first use)`, err);
       });
+  }
+
+  // ── Startup update check ──
+  const checkForUpdatesEnabled = vscode.workspace
+    .getConfiguration("querymt")
+    .get<boolean>("checkForUpdates", true);
+
+  if (checkForUpdatesEnabled) {
+    setTimeout(async () => {
+      try {
+        const channelSetting = vscode.workspace
+          .getConfiguration("querymt")
+          .get<string>("channel", "stable");
+        const channel: ReleaseChannel = channelSetting === "nightly" ? "nightly" : "stable";
+
+        const result = await checkForUpdate(
+          context.globalStorageUri.fsPath,
+          channel,
+          acpClient?.resolvedBinaryPath,
+          log,
+        );
+
+        if (result.updateAvailable) {
+          const action = await vscode.window.showInformationMessage(
+            `A new version of qmtcode is available: ${result.latestVersion} (current: ${result.currentVersion}).`,
+            "Upgrade Now",
+            "Dismiss",
+          );
+          if (action === "Upgrade Now") {
+            await vscode.commands.executeCommand("querymt.upgradeAgent");
+          }
+        }
+      } catch (err) {
+        log.debug(`Startup update check failed: ${formatError(err)}`);
+        // Silent — don't bother the user if the check fails
+      }
+    }, 30_000);
   }
 
   log.info("QueryMT extension activated.");

@@ -13,11 +13,13 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { gt as semverGt, valid as semverValid, coerce as semverCoerce } from "semver";
 
 export type ReleaseChannel = "stable" | "nightly";
 
@@ -41,7 +43,7 @@ interface GithubRelease {
   assets: ReleaseAsset[];
 }
 
-interface BinaryMetadata {
+export interface BinaryMetadata {
   channel: ReleaseChannel;
   releaseTag: string;
   assetName: string;
@@ -266,6 +268,121 @@ function getBinaryVersion(binaryPath: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+// ── Update check ──
+
+export interface UpdateCheckResult {
+  updateAvailable: boolean;
+  currentVersion: string;
+  latestVersion: string;
+  channel: ReleaseChannel;
+}
+
+/**
+ * Read the stored binary metadata written during auto-download.
+ * Returns `undefined` if the metadata file does not exist or is unparseable.
+ */
+export function readBinaryMetadata(globalStoragePath: string): BinaryMetadata | undefined {
+  const metadataPath = join(globalStoragePath, "bin", "qmtcode-metadata.json");
+  if (!existsSync(metadataPath)) {
+    return undefined;
+  }
+  try {
+    const raw = readFileSync(metadataPath, "utf-8");
+    return JSON.parse(raw) as BinaryMetadata;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Normalize a version string for semver comparison.
+ *
+ * Handles formats like:
+ *   - "v0.5.2"            → "0.5.2"
+ *   - "qmtcode 0.5.2"    → "0.5.2"
+ *   - "0.5.2-nightly.20260320" → "0.5.2-nightly.20260320"
+ *
+ * Returns the semver-valid string, or the original input if it cannot be coerced.
+ */
+function normalizeVersion(raw: string): string {
+  // Strip common prefixes
+  let cleaned = raw.trim();
+  cleaned = cleaned.replace(/^qmtcode\s+/i, "");
+  cleaned = cleaned.replace(/^v/i, "");
+
+  // Try strict parse first
+  if (semverValid(cleaned)) {
+    return cleaned;
+  }
+
+  // Try coercion (handles things like "0.5.2-beta" that need range extraction)
+  const coerced = semverCoerce(cleaned, { includePrerelease: true });
+  if (coerced) {
+    return coerced.version;
+  }
+
+  return cleaned;
+}
+
+/**
+ * Check whether a newer version of qmtcode is available on GitHub.
+ *
+ * @param globalStoragePath  Extension global storage path (for reading metadata).
+ * @param channel            Release channel to check against.
+ * @param currentBinaryPath  Path to the currently-used qmtcode binary (used as
+ *                           fallback if no metadata file exists).
+ * @param log                Logger instance.
+ */
+export async function checkForUpdate(
+  globalStoragePath: string,
+  channel: ReleaseChannel,
+  currentBinaryPath: string | undefined,
+  log: LoggerLike,
+): Promise<UpdateCheckResult> {
+  // 1. Determine current version
+  let currentVersion = "unknown";
+
+  const metadata = readBinaryMetadata(globalStoragePath);
+  if (metadata?.version) {
+    currentVersion = metadata.version;
+  } else if (metadata?.releaseTag) {
+    currentVersion = metadata.releaseTag;
+  } else if (currentBinaryPath) {
+    currentVersion = getBinaryVersion(currentBinaryPath) ?? "unknown";
+  }
+
+  // 2. Fetch the latest release
+  const release = await fetchRelease(channel);
+  const latestVersion = release.tag_name;
+
+  // 3. Compare versions
+  const currentNorm = normalizeVersion(currentVersion);
+  const latestNorm = normalizeVersion(latestVersion);
+
+  let updateAvailable = false;
+
+  if (semverValid(currentNorm) && semverValid(latestNorm)) {
+    updateAvailable = semverGt(latestNorm, currentNorm);
+  } else {
+    // Fallback: string comparison (e.g. nightly date tags)
+    updateAvailable = latestNorm !== currentNorm && currentVersion !== "unknown";
+    log.debug(
+      `Version comparison fell back to string compare: current="${currentNorm}" latest="${latestNorm}"`,
+    );
+  }
+
+  log.info(
+    `Update check: current=${currentVersion} latest=${latestVersion} updateAvailable=${updateAvailable}`,
+  );
+
+  return {
+    updateAvailable,
+    currentVersion,
+    latestVersion,
+    channel,
+  };
 }
 
 function escapeRegex(value: string): string {

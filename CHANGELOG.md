@@ -5,6 +5,33 @@ All notable changes to the QueryMT VS Code extension will be documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.3] - 2026-03-23
+
+### Added
+
+- `Upgrade Agent` command (`querymt.upgradeAgent`) — checks for newer qmtcode
+  releases on GitHub and upgrades the binary in-place with a progress
+  notification, then restarts the agent automatically
+- Automatic startup update check — 30 seconds after activation the extension
+  queries the GitHub releases API and shows an unobtrusive notification when a
+  newer version is available, with an "Upgrade Now" action button
+- `querymt.checkForUpdates` setting (default `true`) to enable or disable the
+  automatic startup check
+- "Upgrade Agent" entry in the status bar menu and Manage Provider quickpick
+- Binary source tracking (`BinarySource`) in `AcpClient` — the extension now
+  knows whether qmtcode was resolved from a user setting, bundled binary, PATH,
+  or a managed download, and tailors the upgrade flow accordingly
+- When the binary comes from PATH, the extension bundle, or a custom setting,
+  the upgrade command offers to download a managed copy that the extension will
+  use going forward, rather than silently failing
+- `readBinaryMetadata()` and `checkForUpdate()` exports in `binary-manager` for
+  programmatic version comparison using semver
+
+### Dependencies
+
+- Added `semver` for robust version comparison (handles pre-release and nightly
+  tags)
+
 ## [0.2.2] - 2026-03-23
 
 ### Added
