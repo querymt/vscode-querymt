@@ -120,6 +120,10 @@ export function registerStatusBarCommand(
         kind: vscode.QuickPickItemKind.Separator,
       },
       {
+        label: "$(comment-discussion) Open Chat",
+        description: "Open the QueryMT chat panel",
+      },
+      {
         label: "$(refresh) Restart Agent",
         description: "Restart the QueryMT agent process",
       },
@@ -168,7 +172,9 @@ export function registerStatusBarCommand(
 
     if (!selected) return;
 
-    if (selected.label.includes("Restart Agent")) {
+    if (selected.label.includes("Open Chat")) {
+      await vscode.commands.executeCommand("querymt.openChat");
+    } else if (selected.label.includes("Restart Agent")) {
       await vscode.commands.executeCommand("querymt.restart");
     } else if (selected.label.includes("Show Logs")) {
       await vscode.commands.executeCommand("querymt.showLogs");

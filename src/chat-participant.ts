@@ -15,6 +15,7 @@ import type {
   RequestPermissionResponse,
   SessionConfigOption,
 } from "@agentclientprotocol/sdk";
+import { selectOptionItems } from "./config-options.js";
 
 const log = createLogger("chat");
 
@@ -45,42 +46,6 @@ export function registerChatParticipant(
 
   // Last model set per session (to avoid redundant setModel calls)
   const sessionModels = new Map<string, string>();
-
-  const selectOptionItems = (
-    options: SessionConfigOption[],
-    configId: string,
-  ): Array<{ label: string; value: string; description?: string }> => {
-    let config: SessionConfigOption | undefined;
-    for (const option of options) {
-      if (option.id === configId && option.type === "select") {
-        config = option;
-        break;
-      }
-    }
-    if (!config || config.type !== "select") {
-      return [];
-    }
-
-    const result: Array<{ label: string; value: string; description?: string }> = [];
-    for (const optionOrGroup of config.options) {
-      if ("options" in optionOrGroup) {
-        for (const grouped of optionOrGroup.options) {
-          result.push({
-            label: grouped.name,
-            value: grouped.value,
-            description: grouped.description ?? undefined,
-          });
-        }
-      } else {
-        result.push({
-          label: optionOrGroup.name,
-          value: optionOrGroup.value,
-          description: optionOrGroup.description ?? undefined,
-        });
-      }
-    }
-    return result;
-  };
 
   const setSelectConfigOption = async (
     sessionId: string,

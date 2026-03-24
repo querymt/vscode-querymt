@@ -30,33 +30,42 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Package VSIX
-        run: npm run package
-
       - name: Determine version
         id: meta
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          VSIX_FILE="vscode-querymt-${VERSION}.vsix"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "vsix_file=${VSIX_FILE}" >> "$GITHUB_OUTPUT"
 
-      - name: Verify VSIX exists
-        run: ls -lh "${{ steps.meta.outputs.vsix_file }}"
+      - name: Package VSIX (VS Code Marketplace)
+        run: npm run package:vscode
+
+      - name: Rename VS Code VSIX
+        run: mv "vscode-querymt-${{ steps.meta.outputs.version }}.vsix" "vscode-querymt-${{ steps.meta.outputs.version }}-vscode.vsix"
+
+      - name: Package VSIX (Open VSX)
+        run: npm run package:ovsx
+
+      - name: Rename Open VSX VSIX
+        run: mv "vscode-querymt-${{ steps.meta.outputs.version }}.vsix" "vscode-querymt-${{ steps.meta.outputs.version }}-ovsx.vsix"
+
+      - name: Verify VSIX files exist
+        run: ls -lh vscode-querymt-${{ steps.meta.outputs.version }}-*.vsix
 
       - name: Publish to VS Code Marketplace
-        run: npx vsce publish --packagePath "${{ steps.meta.outputs.vsix_file }}"
+        run: npx vsce publish --packagePath "vscode-querymt-${{ steps.meta.outputs.version }}-vscode.vsix"
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
 
       - name: Publish to Open VSX
         if: vars.PUBLISH_OVSX == 'true'
-        run: npx ovsx publish "${{ steps.meta.outputs.vsix_file }}"
+        run: npx ovsx publish "vscode-querymt-${{ steps.meta.outputs.version }}-ovsx.vsix"
         env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ steps.meta.outputs.vsix_file }}
+          files: |
+            vscode-querymt-${{ steps.meta.outputs.version }}-vscode.vsix
+            vscode-querymt-${{ steps.meta.outputs.version }}-ovsx.vsix
           generate_release_notes: true

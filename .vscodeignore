@@ -3,6 +3,7 @@
 **/esbuild.mjs
 src/
 test/
+scripts/
 node_modules/
 .vscode/
 .github/
@@ -11,3 +12,5 @@ node_modules/
 .gitignore
 .eslintrc*
 .prettierrc*
+.package.json.bak
+bun.lock

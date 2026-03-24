@@ -5,6 +5,62 @@ All notable changes to the QueryMT VS Code extension will be documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-03-24
+
+### Added
+
+- **Open VSX / VSCodium support** — the extension now works on VS Code-compatible
+  hosts (VSCodium, Code OSS) that lack the proprietary Chat Participant and
+  Language Model APIs; all core agent functionality is available through a
+  standalone webview chat panel
+- **Webview chat panel** — full-featured chat UI registered as a
+  `WebviewViewProvider` (`querymt.chatView`) with a dedicated activity bar icon;
+  can be dragged to the sidebar, secondary sidebar, or bottom panel
+- **Session management** — session dropdown in the webview toolbar to list,
+  switch between, and create new ACP sessions
+- **Model picker** — dropdown in the webview toolbar to select the active model
+  from all available providers
+- **Mode and reasoning effort controls** — dropdowns in the webview toolbar to
+  change agent mode and reasoning effort per session, backed by ACP session
+  config options
+- **@file references** — type `@` in the chat input to autocomplete and attach
+  workspace files as embedded ACP resources (`ContentBlock` type `resource`);
+  shows recently opened editor tabs first, then workspace files matching the
+  query; multiple references per prompt are supported
+- `querymt.openChat` command — opens or focuses the webview chat panel from the
+  command palette or status bar menu
+- "Open Chat" entry in the status bar quick-pick menu
+- **Dual VSIX packaging** — `npm run package:vscode` and `npm run package:ovsx`
+  produce target-specific packages from a single codebase; the VS Code build
+  retains all chat/LM contributions, the Open VSX build strips them
+- Manifest preparation script (`scripts/prepare-manifest.mjs`) — backs up
+  `package.json`, strips `chatParticipants` and `languageModelChatProviders`
+  contributions for Open VSX builds, and restores the original after packaging
+
+### Changed
+
+- **Runtime capability guards** — `vscode.chat.createChatParticipant` and
+  `vscode.lm.registerLanguageModelChatProvider` are now checked at runtime
+  before registration; the extension activates cleanly when these APIs are
+  unavailable instead of crashing
+- **Auto-open webview on VSCodium** — when the Chat Participant API is not
+  detected, the webview chat panel opens automatically on activation so users
+  have an immediate entrypoint
+- **Collapsible tool calls** — tool call progress in the webview uses
+  `<details>/<summary>` elements, collapsed by default, showing only the tool
+  name and a status indicator (spinner while running, checkmark when done);
+  click to expand and view output (code blocks, diffs)
+- **Segmented markdown rendering** — the webview renders assistant responses as
+  interleaved markdown segments and tool call elements, preventing tool calls
+  from being destroyed by markdown re-renders
+- **Shared config option helpers** — extracted `selectOptionItems` and
+  `getSelectCurrentValue` into `src/config-options.ts`, shared by both the chat
+  participant and the webview; also added `fetchModelList` for model dropdown
+  population
+- **Release workflow** — `release.yml` now builds two VSIX files (one for VS
+  Code Marketplace, one for Open VSX), publishes each to its respective
+  registry, and attaches both to the GitHub Release
+
 ## [0.2.3] - 2026-03-23
 
 ### Added

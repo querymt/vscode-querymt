@@ -17,6 +17,7 @@ import { registerChatParticipant } from "./chat-participant.js";
 import { QueryMTModelProvider } from "./model-provider.js";
 import { handleWorkspaceQuery } from "./workspace-query.js";
 import { StatusBar, registerStatusBarCommand } from "./status-bar.js";
+import { ChatViewProvider } from "./webview-chat.js";
 import {
   checkForUpdate,
   ensureDownloadedBinary,
@@ -417,19 +418,57 @@ export async function activate(
   context.subscriptions.push(statusBar);
   context.subscriptions.push(registerStatusBarCommand(acpClient, statusBar));
 
-  // ── Chat Participant ──
+  // ── Chat Participant (VS Code only — not available in VSCodium) ──
 
-  const chatDisposables = registerChatParticipant(acpClient, statusBar);
-  for (const d of chatDisposables) {
-    context.subscriptions.push(d);
+  const hasChatApi =
+    typeof vscode.chat?.createChatParticipant === "function";
+  if (hasChatApi) {
+    const chatDisposables = registerChatParticipant(acpClient, statusBar);
+    for (const d of chatDisposables) {
+      context.subscriptions.push(d);
+    }
+  } else {
+    log.info(
+      "Chat participant API not available — using webview chat panel",
+    );
   }
 
-  // ── Language Model Chat Provider ──
+  // ── Language Model Chat Provider (VS Code only) ──
 
-  const modelProvider = new QueryMTModelProvider(acpClient);
-  const modelProviderDisposable =
-    vscode.lm.registerLanguageModelChatProvider("querymt", modelProvider);
-  context.subscriptions.push(modelProviderDisposable);
+  const hasLmApi =
+    typeof vscode.lm?.registerLanguageModelChatProvider === "function";
+  let modelProvider: QueryMTModelProvider | undefined;
+  if (hasLmApi) {
+    modelProvider = new QueryMTModelProvider(acpClient);
+    const modelProviderDisposable =
+      vscode.lm.registerLanguageModelChatProvider("querymt", modelProvider);
+    context.subscriptions.push(modelProviderDisposable);
+  } else {
+    log.info("Language model provider API not available — skipping");
+  }
+
+  // ── Webview Chat View (works everywhere — sidebar, panel, secondary sidebar) ──
+
+  const chatViewProvider = new ChatViewProvider(context, acpClient!, statusBar);
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(
+      ChatViewProvider.viewId,
+      chatViewProvider,
+      { webviewOptions: { retainContextWhenHidden: true } },
+    ),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("querymt.openChat", () => {
+      vscode.commands.executeCommand(`${ChatViewProvider.viewId}.focus`);
+    }),
+  );
+
+  // If the chat participant API is not available, auto-open the webview
+  // on first activation so users have an immediate entrypoint.
+  if (!hasChatApi) {
+    vscode.commands.executeCommand(`${ChatViewProvider.viewId}.focus`);
+  }
 
   // ── Commands ──
 
@@ -837,7 +876,7 @@ export async function activate(
       }
       try {
         await acpClient!.extMethod("_querymt/refreshModels", {});
-        modelProvider.refreshModels();
+        modelProvider?.refreshModels();
         vscode.window.showInformationMessage("QueryMT model list refreshed.");
       } catch (err) {
         vscode.window.showErrorMessage(

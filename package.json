@@ -2,7 +2,7 @@
   "name": "vscode-querymt",
   "displayName": "QueryMT",
   "description": "AI coding agent powered by QueryMT — chat, code generation, and language intelligence via the Agent Client Protocol",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "publisher": "querymt",
   "license": "MIT",
   "repository": {
@@ -32,6 +32,24 @@
   "main": "./dist/extension.js",
   "icon": "media/icon.png",
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "querymt",
+          "title": "QueryMT",
+          "icon": "media/icon.png"
+        }
+      ]
+    },
+    "views": {
+      "querymt": [
+        {
+          "type": "webview",
+          "id": "querymt.chatView",
+          "name": "Chat"
+        }
+      ]
+    },
     "chatParticipants": [
       {
         "id": "querymt.agent",
@@ -117,6 +135,11 @@
       {
         "command": "querymt.upgradeAgent",
         "title": "Upgrade Agent",
+        "category": "QueryMT"
+      },
+      {
+        "command": "querymt.openChat",
+        "title": "Open Chat",
         "category": "QueryMT"
       }
     ],
@@ -208,6 +231,10 @@
     "lint": "tsc --noEmit",
     "prepackage": "npm run build",
     "package": "vsce package --no-dependencies",
+    "package:vscode": "node scripts/prepare-manifest.mjs vscode && vsce package --no-dependencies",
+    "package:ovsx": "node scripts/prepare-manifest.mjs ovsx && vsce package --no-dependencies",
+    "postpackage:vscode": "node scripts/prepare-manifest.mjs restore",
+    "postpackage:ovsx": "node scripts/prepare-manifest.mjs restore",
     "vscode:prepublish": "npm run build",
     "test": "vitest run",
     "test:watch": "vitest",
