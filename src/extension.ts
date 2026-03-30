@@ -395,14 +395,15 @@ export async function activate(
   context.subscriptions.push(acpClient);
 
   // Register the workspace query handler for reverse-RPC from the agent.
-  // When the agent sends an ext_method `_workspace/query`, the SDK strips the
-  // `_` prefix and delivers it as `workspace/query` to our extMethod handler.
+  // The agent sends ExtRequest::new("workspace/query", ...) which the Rust SDK
+  // prefixes with `_` on the wire. The TS SDK passes the raw wire name through,
+  // so we receive `_workspace/query` here.
   acpClient.setExtMethodHandler(
     async (
       method: string,
       params: Record<string, unknown>,
     ): Promise<Record<string, unknown>> => {
-      if (method === "workspace/query") {
+      if (method === "_workspace/query") {
         const result = await handleWorkspaceQuery(
           params as unknown as WorkspaceQueryParams,
         );

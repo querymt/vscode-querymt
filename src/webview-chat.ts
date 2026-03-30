@@ -164,6 +164,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         await this.onFileSearch(msg.query as string);
         break;
 
+      case "openFile":
+        await this.onOpenFile(msg.path as string, msg.line as number | undefined);
+        break;
+
       default:
         log.warn(`Unknown webview message type: ${msg.type}`);
     }
@@ -422,6 +426,28 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
 
     this.postToWebview({ type: "fileSuggestions", files });
+  }
+
+  private async onOpenFile(path: string, line?: number): Promise<void> {
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri;
+    const uri = path.startsWith("/")
+      ? vscode.Uri.file(path)
+      : workspaceRoot
+        ? vscode.Uri.joinPath(workspaceRoot, path)
+        : vscode.Uri.file(path);
+
+    const doc = await vscode.workspace.openTextDocument(uri);
+    const selection =
+      line !== undefined
+        ? new vscode.Range(
+            new vscode.Position(Math.max(0, line - 1), 0),
+            new vscode.Position(Math.max(0, line - 1), 0),
+          )
+        : undefined;
+    await vscode.window.showTextDocument(doc, {
+      preview: true,
+      selection,
+    });
   }
 
   /** Maximum file size to embed inline (1 MB). */

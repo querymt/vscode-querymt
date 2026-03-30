@@ -32,10 +32,16 @@ export function registerChatParticipant(
   // Map VS Code chat thread → ACP session ID
   const threadSessions = new Map<string, string>();
 
-  // Active response streams keyed by session ID (for streaming updates)
+  // Active response streams keyed by session ID (for streaming updates).
+  // `pendingText` buffers trailing text from the last streaming chunk that might
+  // be the start of a file:line reference split across chunk boundaries.
   const activeStreams = new Map<
     string,
-    { stream: vscode.ChatResponseStream; token: vscode.CancellationToken }
+    {
+      stream: vscode.ChatResponseStream;
+      token: vscode.CancellationToken;
+      pendingText: string;
+    }
   >();
 
   // Available commands per session (for followup suggestions)
@@ -124,8 +130,8 @@ export function registerChatParticipant(
     }
 
     // Determine the workspace cwd
-    const cwd =
-      vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri;
+    const cwd = workspaceRoot?.fsPath ?? process.cwd();
 
     // Use a stable thread identifier. VS Code ChatContext doesn't expose a
     // thread ID directly, but the context.history array identity is stable
@@ -209,7 +215,7 @@ export function registerChatParticipant(
     }
 
     // Register this stream as active so sessionUpdate events can stream to it
-    activeStreams.set(sessionId, { stream: response, token });
+    activeStreams.set(sessionId, { stream: response, token, pendingText: "" });
 
     // Create a promise that rejects when the cancellation token fires,
     // so we can race it against the prompt call and actually unblock.
@@ -253,6 +259,11 @@ export function registerChatParticipant(
         return { errorDetails: { message: msg } };
       }
     } finally {
+      const entry = activeStreams.get(sessionId);
+      if (entry && entry.pendingText) {
+        // Flush any buffered trailing text (no further chunks coming)
+        entry.stream.markdown(transformFileRefsToLinks(entry.pendingText, workspaceRoot));
+      }
       activeStreams.delete(sessionId);
     }
   };
@@ -288,8 +299,7 @@ export function registerChatParticipant(
         );
         return;
       }
-      const { stream, token } = entry;
-      if (token.isCancellationRequested) return;
+      if (entry.token.isCancellationRequested) return;
 
       // Capture available commands for followup suggestions
       if (params.update.sessionUpdate === "available_commands_update") {
@@ -311,7 +321,7 @@ export function registerChatParticipant(
         });
       }
 
-      renderSessionUpdate(stream, params.update);
+      renderSessionUpdate(entry, params.update, vscode.workspace.workspaceFolders?.[0]?.uri);
     },
   );
   disposables.push(updateSub);
@@ -615,14 +625,31 @@ interface SchemaProperty {
 // ── Session update rendering ──
 
 function renderSessionUpdate(
-  stream: vscode.ChatResponseStream,
+  entry: {
+    stream: vscode.ChatResponseStream;
+    token: vscode.CancellationToken;
+    pendingText: string;
+  },
   update: SessionUpdate,
+  workspaceRoot: vscode.Uri | undefined,
 ): void {
   switch (update.sessionUpdate) {
     case "agent_message_chunk": {
       const content = update.content;
       if (content.type === "text") {
-        stream.markdown(content.text);
+        // Prepend any text buffered from the previous chunk
+        const text = entry.pendingText + content.text;
+        // Find the last newline — everything after it might be a partial file:line
+        // reference split across chunks, so hold it back.
+        const lastNl = text.lastIndexOf("\n");
+        if (lastNl >= 0) {
+          const ready = text.slice(0, lastNl + 1);
+          entry.pendingText = text.slice(lastNl + 1);
+          entry.stream.markdown(transformFileRefsToLinks(ready, workspaceRoot));
+        } else {
+          // No newline yet — buffer the whole thing
+          entry.pendingText = text;
+        }
       }
       break;
     }
@@ -631,7 +658,7 @@ function renderSessionUpdate(
       // Thoughts could be rendered differently; for now show as italic
       const content = update.content;
       if (content.type === "text" && content.text.trim().length > 0) {
-        stream.markdown(`*${content.text}*`);
+        entry.stream.markdown(`*${content.text}*`);
       }
       break;
     }
@@ -639,19 +666,19 @@ function renderSessionUpdate(
     case "tool_call": {
       const status = update.status ?? "running";
       if (status === "running") {
-        stream.progress(`Running: ${update.title}`);
+        entry.stream.progress(`Running: ${update.title}`);
       } else {
-        stream.markdown(`\n**Tool:** ${update.title} — ${status}\n`);
+        entry.stream.markdown(`\n**Tool:** ${update.title} — ${status}\n`);
       }
       // Render clickable file:line anchors for affected locations
-      renderLocationAnchors(stream, update.locations);
+      renderLocationAnchors(entry.stream, update.locations);
       break;
     }
 
     case "tool_call_update": {
       const status = update.status;
       // Render clickable file:line anchors for affected locations
-      renderLocationAnchors(stream, update.locations);
+      renderLocationAnchors(entry.stream, update.locations);
       if (status === "completed" || status === "failed") {
         // Render tool call content if available
         if (update.content && update.content.length > 0) {
@@ -661,23 +688,23 @@ function renderSessionUpdate(
                 tryParseReadToolDirectory(item.content.text) ??
                 tryParseLsDirectory(item.content.text);
               if (dirListing) {
-                stream.filetree(
+                entry.stream.filetree(
                   dirListing.entries,
                   vscode.Uri.file(dirListing.basePath),
                 );
               } else {
-                stream.markdown(
+                entry.stream.markdown(
                   `\n\`\`\`\n${item.content.text}\n\`\`\`\n`,
                 );
               }
             } else if (item.type === "diff") {
               // Add file reference to the sidebar
-              stream.reference(vscode.Uri.file(item.path));
-              stream.markdown(
+              entry.stream.reference(vscode.Uri.file(item.path));
+              entry.stream.markdown(
                 `\n\`\`\`diff\n${item.oldText ?? ""}→\n${item.newText ?? ""}\n\`\`\`\n`,
               );
             } else if (item.type === "terminal") {
-              stream.markdown(
+              entry.stream.markdown(
                 `\n*Terminal: \`${(item as any).terminalId}\`*\n`,
               );
             }
@@ -691,12 +718,12 @@ function renderSessionUpdate(
       // Render plan entries as a checklist
       if (update.entries) {
         const lines = update.entries.map(
-          (entry) => {
-            const check = entry.status === "completed" ? "x" : " ";
-            return `- [${check}] ${entry.content}`;
+          (planEntry) => {
+            const check = planEntry.status === "completed" ? "x" : " ";
+            return `- [${check}] ${planEntry.content}`;
           },
         );
-        stream.markdown(`\n${lines.join("\n")}\n`);
+        entry.stream.markdown(`\n${lines.join("\n")}\n`);
       }
       break;
     }
@@ -760,6 +787,78 @@ function renderLocationAnchors(
       stream.anchor(uri);
     }
   }
+}
+
+// ── File-reference link helpers ──
+
+/** File path pattern shared by both passes: path with ≥1 slash + extension + :line[:col]. */
+const FILE_PATH_PATTERN =
+  String.raw`(\/?(?:[\w.\-]+\/)+[\w.\-]+\.\w{1,10}):(\d+)(?::(\d+))?`;
+
+/**
+ * Pass 1 — backtick-wrapped file refs: `path/file.ext:line`
+ * Transforms to [`path/file.ext:line`](file://...#L<n>) so the link
+ * preserves inline-code styling while being clickable.
+ */
+const BACKTICK_FILE_REF_RE = new RegExp("`" + FILE_PATH_PATTERN + "`", "g");
+
+/**
+ * Pass 2 — bare file refs, with skip patterns for:
+ *   (a) backtick spans   — consumed and returned unchanged
+ *   (b) markdown links   — consumed and returned unchanged
+ *   (c) bare file:line   — captured for transformation
+ */
+const BARE_FILE_REF_RE = new RegExp(
+  "`[^`]*`" + "|" + String.raw`\[[^\]]*\]\([^)]*\)` + "|" + FILE_PATH_PATTERN,
+  "g",
+);
+
+/**
+ * Replace `file:line` patterns in `text` with markdown links using `file://`
+ * URIs so they are clickable in VS Code Chat.
+ *
+ * Two passes:
+ *  1. Backtick-wrapped refs → [`path:line`](file://...) (preserves code style)
+ *  2. Bare refs → [path:line](file://...) (skips backtick spans & existing links)
+ *
+ * Relative paths are resolved against `workspaceRoot`. If no workspace is
+ * open, the text is returned unchanged.
+ */
+function transformFileRefsToLinks(
+  text: string,
+  workspaceRoot: vscode.Uri | undefined,
+): string {
+  if (!workspaceRoot) return text;
+
+  const buildLink = (filePath: string, line: string): string => {
+    const uri = filePath.startsWith("/")
+      ? vscode.Uri.file(filePath)
+      : vscode.Uri.joinPath(workspaceRoot, filePath);
+    return `${uri.toString()}#L${line}`;
+  };
+
+  // Pass 1: backtick-wrapped file refs → clickable markdown link with code styling
+  let result = text.replace(
+    BACKTICK_FILE_REF_RE,
+    (_match, filePath, line, _col) => {
+      const linkUri = buildLink(filePath, line);
+      // Preserve the colon-separated ref (file:line or file:line:col) as the display text
+      const display = _col ? `${filePath}:${line}:${_col}` : `${filePath}:${line}`;
+      return `[\`${display}\`](${linkUri})`;
+    },
+  );
+
+  // Pass 2: bare file refs (skip backtick spans and existing links)
+  result = result.replace(
+    BARE_FILE_REF_RE,
+    (match, filePath, line, _col) => {
+      if (!filePath) return match; // backtick span or existing link — pass through
+      const linkUri = buildLink(filePath, line);
+      return `[${match}](${linkUri})`;
+    },
+  );
+
+  return result;
 }
 
 // ── Directory listing parsers ──

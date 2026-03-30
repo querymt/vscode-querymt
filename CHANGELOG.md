@@ -5,6 +5,40 @@ All notable changes to the QueryMT VS Code extension will be documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.1] - 2026-03-30
+
+### Added
+
+- **Bundled VS Code config** — the extension now ships a self-contained
+  `configs/vscode.toml` that enables the `language_query` tool by default;
+  when no custom `querymt.configFile` is set, the bundled config is
+  automatically passed to the agent so VS Code language intelligence
+  (diagnostics, references, definitions, symbols, hover, type definitions)
+  is available out of the box
+- **Clickable file references** — `path/to/file.ext:line` patterns in agent
+  responses are transformed into clickable links that open the file at the
+  referenced line in the editor; works in both the Chat Participant panel
+  (as `file://` markdown links) and the webview chat panel (as inline
+  `<a>` elements with a dedicated click handler); backtick-wrapped
+  references preserve inline code styling while remaining clickable
+- **Code intelligence system prompt** — the bundled VS Code config includes
+  guidance nudging the agent to prefer `language_query` for semantic
+  navigation (definitions, references, symbols, types, hover) over text
+  search, and to use `diagnostics` for file-level error checking
+
+### Fixed
+
+- **`language_query` internal error** — the `_workspace/query` ext method
+  name was mismatched in the extension handler (`workspace/query` vs the
+  wire name `_workspace/query`); fixed the comparison and corrected the
+  comment explaining the ACP ext method naming convention
+- **`language_query` "not available in this mode"** — the workspace query
+  bridge was never propagated from the ACP connection to session actors;
+  added bridge field to `SessionRegistry`, wired `SetBridge` into
+  `new_session`, `load_session`, and `resume_session`; added
+  `workspace_query_bridge` field to `ExecutionContext` and propagated it
+  through `tool_context()` into `AgentToolContext`
+
 ## [0.3.0] - 2026-03-24
 
 ### Added

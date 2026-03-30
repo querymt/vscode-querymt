@@ -106,6 +106,16 @@ export class AcpClient implements vscode.Disposable {
     const args: string[] = [];
     if (configFile) {
       args.push(configFile);
+      this.log.info(`Using user config file: ${configFile}`);
+    } else {
+      const extensionPath = vscode.extensions.getExtension("querymt.vscode-querymt")?.extensionPath;
+      if (extensionPath) {
+        const bundledConfigPath = join(extensionPath, "configs", "vscode.toml");
+        if (existsSync(bundledConfigPath)) {
+          args.push(bundledConfigPath);
+          this.log.info(`Using bundled VS Code config: ${bundledConfigPath}`);
+        }
+      }
     }
     args.push("--acp");
 

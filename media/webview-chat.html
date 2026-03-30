@@ -190,6 +190,13 @@
       text-decoration: none;
     }
 
+    .msg-body a.file-ref {
+      font-family: var(--vscode-editor-font-family, monospace);
+      font-size: 0.9em;
+      text-decoration: underline dotted;
+      cursor: pointer;
+    }
+
     .msg-body strong { font-weight: 600; }
     .msg-body em { font-style: italic; }
 
@@ -1019,6 +1026,25 @@
       text = text.replace(/(?<!\*)\*([^*]+?)\*(?!\*)/g, "<em>$1</em>");
       // Links
       text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" title="$2">$1</a>');
+      // File references — two passes to handle both <code>-wrapped and bare refs.
+      //
+      // Pass 1: <code>file:line</code> → clickable link wrapping the <code> span
+      text = text.replace(
+        /<code>(\/?(?:[\w.\-]+\/)+[\w.\-]+\.\w{1,10}):(\d+)(?::(\d+))?<\/code>/g,
+        (match, file, line, col) => {
+          const title = col ? `${file}:${line}:${col}` : `${file}:${line}`;
+          return `<a class="file-ref" data-file="${escapeAttr(file)}" data-line="${line}" title="${title}">${match}</a>`;
+        }
+      );
+      // Pass 2: bare file:line refs (skip <code>, <a>, and other tags)
+      text = text.replace(
+        /<code>[^<]*<\/code>|<a [^>]*>.*?<\/a>|(\/?(?:[\w.\-]+\/)+[\w.\-]+\.\w{1,10}):(\d+)(?::(\d+))?/g,
+        (match, file, line, col) => {
+          if (!file) return match; // <code> or <a> span — pass through
+          const title = col ? `${file}:${line}:${col}` : `${file}:${line}`;
+          return `<a class="file-ref" data-file="${escapeAttr(file)}" data-line="${line}" title="${title}">${match}</a>`;
+        }
+      );
       // Checkbox (task list items)
       text = text.replace(/\[x\]/gi, "&#9745;");
       text = text.replace(/\[ \]/g, "&#9744;");
@@ -1032,6 +1058,21 @@
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;");
     }
+
+    function escapeAttr(str) {
+      return str.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+    }
+
+    // ── File-reference click handler ──
+
+    document.getElementById("messages").addEventListener("click", (e) => {
+      const link = e.target.closest("a.file-ref");
+      if (!link) return;
+      e.preventDefault();
+      const file = link.dataset.file;
+      const line = link.dataset.line ? parseInt(link.dataset.line, 10) : undefined;
+      send("openFile", { path: file, line });
+    });
 
     // ── @file autocomplete ──
 
