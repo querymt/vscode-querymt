@@ -5,6 +5,22 @@ All notable changes to the QueryMT VS Code extension will be documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.2] - 2026-04-13
+
+### Added
+
+- **`index` tool** — the bundled VS Code config now includes the `index` tool
+  for producing compact structural skeletons of source files (imports, types,
+  classes, functions with line ranges); the system prompt guides the agent to
+  use `index` on unfamiliar or large files before `read_tool` to target reads
+  to relevant sections
+
+### Fixed
+
+- **Stale `web_fetch` references in system prompt** — replaced leftover
+  `web_fetch` mentions with `browse` to match the actual tool name in the
+  tools list; removed the now-irrelevant redirect-handling instruction
+
 ## [0.3.1] - 2026-03-30
 
 ### Added
