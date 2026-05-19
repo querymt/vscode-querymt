@@ -29,6 +29,8 @@ import {
   type ReadTextFileRequest,
   type ReadTextFileResponse,
   type LoadSessionResponse,
+  type ForkSessionResponse,
+  type ResumeSessionResponse,
   type SessionConfigOption,
 } from "@agentclientprotocol/sdk";
 import { createLogger } from "./logger.js";
@@ -424,6 +426,91 @@ export class AcpClient implements vscode.Disposable {
     });
     this.sessionConfigOptions.set(sessionId, resp.configOptions);
     return resp.configOptions;
+  }
+
+  // ── Session lifecycle ──
+
+  /**
+   * Delete a session and its data from the agent.
+   * Delegates to the ACP `session/delete` (unstable) method.
+   */
+  async deleteSession(sessionId: string): Promise<void> {
+    this.ensureConnected();
+    await this.connection!.unstable_deleteSession({ sessionId });
+    this.sessionConfigOptions.delete(sessionId);
+    if (this.lastActiveSessionId === sessionId) {
+      this.lastActiveSessionId = undefined;
+    }
+  }
+
+  /**
+   * Fork a session, creating a new independent session from an existing one.
+   * Delegates to the ACP `session/fork` (unstable) method.
+   *
+   * @returns The new session ID and optional config options.
+   */
+  async forkSession(sessionId: string): Promise<ForkSessionResponse> {
+    this.ensureConnected();
+    const cwd =
+      vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+    const resp = await this.connection!.unstable_forkSession({
+      sessionId,
+      cwd,
+      mcpServers: [],
+    });
+    this.lastActiveSessionId = resp.sessionId;
+    if (resp.configOptions) {
+      this.sessionConfigOptions.set(resp.sessionId, resp.configOptions);
+    }
+    return resp;
+  }
+
+  /**
+   * Close an active session and free its resources on the agent.
+   * Unlike `deleteSession`, this does not remove persisted data.
+   * Delegates to the ACP `session/close` method.
+   */
+  async closeSession(sessionId: string): Promise<void> {
+    this.ensureConnected();
+    await this.connection!.closeSession({ sessionId });
+    this.sessionConfigOptions.delete(sessionId);
+    if (this.lastActiveSessionId === sessionId) {
+      this.lastActiveSessionId = undefined;
+    }
+  }
+
+  /**
+   * Resume an existing session without replaying message history.
+   * Delegates to the ACP `session/resume` method.
+   *
+   * @returns Config options and mode state for the resumed session.
+   */
+  async resumeSession(sessionId: string): Promise<ResumeSessionResponse> {
+    this.ensureConnected();
+    const cwd =
+      vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+    const resp = await this.connection!.resumeSession({
+      sessionId,
+      cwd,
+      mcpServers: [],
+    });
+    this.lastActiveSessionId = sessionId;
+    if (resp.configOptions) {
+      this.sessionConfigOptions.set(sessionId, resp.configOptions);
+    }
+    return resp;
+  }
+
+  // ── Session modes ──
+
+  /**
+   * Set the operational mode for a session (e.g. "ask", "code", "architect").
+   * Delegates to the ACP `session/set_mode` method.
+   */
+  async setSessionMode(sessionId: string, modeId: string): Promise<void> {
+    this.ensureConnected();
+    this.lastActiveSessionId = sessionId;
+    await this.connection!.setSessionMode({ sessionId, modeId });
   }
 
   getLastActiveSessionId(): string | undefined {
