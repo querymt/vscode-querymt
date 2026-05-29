@@ -827,6 +827,13 @@
           appendMessage("error", msg.message);
           break;
 
+        case "cancelled":
+          ensureAssistantBubble();
+          markdownBuffer += "\n*Cancelled.*\n";
+          currentMarkdownDiv.innerHTML = renderMarkdown(markdownBuffer);
+          scrollToBottom();
+          break;
+
         case "clear":
           clearMessages();
           break;

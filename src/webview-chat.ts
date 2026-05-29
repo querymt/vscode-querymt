@@ -308,6 +308,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     try {
       const result = await this.acpClient.prompt(this.activeSessionId, contentBlocks);
       log.info(`Prompt completed: stopReason=${result.stopReason}`);
+      if (result.stopReason === "cancelled") {
+        this.postToWebview({ type: "cancelled" });
+      }
     } catch (err) {
       const message = formatError(err);
       if (message !== "Cancelled") {

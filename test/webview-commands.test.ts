@@ -74,6 +74,42 @@ describe("webview slash command helpers", () => {
 });
 
 describe("ChatViewProvider command messaging", () => {
+  it("posts a cancelled message when the prompt response stopReason is cancelled", async () => {
+    const { ChatViewProvider } = await import("../src/webview-chat.js");
+
+    const acpClient = {
+      isConnected: true,
+      prompt: vi.fn().mockResolvedValue({ stopReason: "cancelled" }),
+    };
+
+    const provider = new ChatViewProvider(
+      { extensionPath: "/tmp/ext" } as any,
+      acpClient as any,
+      undefined,
+    );
+
+    const postToWebview = vi.fn();
+    (provider as any).postToWebview = postToWebview;
+    (provider as any).activeSessionId = "session-1";
+    (provider as any).resolveFileReferences = vi.fn().mockResolvedValue([]);
+
+    await (provider as any).onPrompt("stop now");
+
+    expect(acpClient.prompt).toHaveBeenCalledWith("session-1", [
+      { type: "text", text: "stop now" },
+    ]);
+    expect(postToWebview).toHaveBeenNthCalledWith(1, {
+      type: "status",
+      state: "streaming",
+    });
+    expect(postToWebview).toHaveBeenCalledWith({ type: "cancelled" });
+    expect(postToWebview).toHaveBeenNthCalledWith(3, { type: "done" });
+    expect(postToWebview).toHaveBeenNthCalledWith(4, {
+      type: "status",
+      state: "idle",
+    });
+  });
+
   it("posts stored commands for the active session", async () => {
     const { ChatViewProvider } = await import("../src/webview-chat.js");
 

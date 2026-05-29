@@ -30,6 +30,7 @@ import {
   type ReadTextFileResponse,
   type LoadSessionResponse,
   type ForkSessionResponse,
+  type PromptResponse,
   type ResumeSessionResponse,
   type SessionConfigOption,
 } from "@agentclientprotocol/sdk";
@@ -386,14 +387,13 @@ export class AcpClient implements vscode.Disposable {
   async prompt(
     sessionId: string,
     contentBlocks: ContentBlock[],
-  ): Promise<{ stopReason: string }> {
+  ): Promise<PromptResponse> {
     this.ensureConnected();
     this.lastActiveSessionId = sessionId;
-    const resp = await this.connection!.prompt({
+    return this.connection!.prompt({
       sessionId,
       prompt: contentBlocks,
     });
-    return { stopReason: resp.stopReason };
   }
 
   async cancel(sessionId: string): Promise<void> {

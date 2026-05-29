@@ -5,6 +5,49 @@ All notable changes to the QueryMT VS Code extension will be documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] - 2026-05-29
+
+### Added
+
+- **ACP session lifecycle support** — the extension now supports newer ACP
+  session operations exposed by the upgraded SDK, including session fork,
+  resume, close, delete, and explicit session mode changes through the
+  `AcpClient` bridge
+- **Webview slash command suggestions** — the chat webview now consumes
+  `available_commands_update` session events, normalizes agent-provided command
+  names and input hints, and surfaces them as `/command` autocomplete in the
+  prompt box alongside existing `@file` suggestions
+- **Refresh-aware model list loading** — model list fetching now preserves ACP
+  snapshot metadata (`refresh_in_progress`, `stale`) so the webview can show a
+  loading state and retry while the agent is still refreshing provider models
+- **Scalable activity bar icon** — added `media/icon.svg` and included it in the
+  VSIX so the QueryMT activity bar icon renders from SVG instead of the raster
+  PNG asset
+- **Startup coordination and regression coverage** — added focused tests for ACP
+  startup coalescing, model-provider auto-start behavior, webview command
+  messaging, and model-list refresh retries
+
+### Changed
+
+- **Upgraded ACP SDK** — bumped `@agentclientprotocol/sdk` from `^0.18.0` to
+  `^0.22.0` to match newer ACP session and command capabilities
+- **More reliable agent startup** — concurrent startup paths now funnel through
+  `ensureStarted()` so activation auto-start, restart handling, and model
+  listing reuse a single in-flight startup instead of racing multiple agent
+  launches
+- **Language model provider auto-start** — requesting models from VS Code now
+  starts the agent on demand when `querymt.autoStart` is enabled, and refreshes
+  the provider list after activation connects successfully
+
+### Fixed
+
+- **Cancelled webview prompts** — the webview now recognizes ACP prompt
+  responses with `stopReason: "cancelled"` and renders a visible
+  `*Cancelled.*` assistant message instead of silently ending the request
+- **Transient empty model pickers after startup** — the webview model dropdown
+  now retries after stale or in-progress model snapshots, avoiding the empty
+  first-load state when provider discovery finishes shortly after startup
+
 ## [0.3.2] - 2026-04-13
 
 ### Added
