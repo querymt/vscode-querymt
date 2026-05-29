@@ -235,10 +235,10 @@ describe("chat participant model propagation", () => {
     );
 
     expect(acpClient.newSession).toHaveBeenCalled();
-    // Should send "provider/model" format using family as provider
+    // QueryMT model ids are already canonical, so the client forwards them as-is.
     expect(acpClient.setModel).toHaveBeenCalledWith(
       "test-session-id",
-      "anthropic/claude-sonnet-4-20250514",
+      "claude-sonnet-4-20250514",
     );
   });
 
@@ -411,7 +411,7 @@ describe("chat participant model propagation", () => {
 
     expect(acpClient.setModel).toHaveBeenCalledWith(
       "test-session-id",
-      "anthropic/claude-sonnet-4-20250514",
+      "claude-sonnet-4-20250514",
     );
     acpClient.setModel.mockClear();
     acpClient.newSession.mockClear();
@@ -430,10 +430,10 @@ describe("chat participant model propagation", () => {
 
     // Should NOT have created a new session (reuse)
     expect(acpClient.newSession).not.toHaveBeenCalled();
-    // But SHOULD have called setModel with the new model
+    // QueryMT model ids are forwarded as-is on session reuse too.
     expect(acpClient.setModel).toHaveBeenCalledWith(
       "test-session-id",
-      "openai/gpt-4o",
+      "gpt-4o",
     );
   });
 

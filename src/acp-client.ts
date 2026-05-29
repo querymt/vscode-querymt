@@ -85,6 +85,7 @@ export class AcpClient implements vscode.Disposable {
   private permissionHandler: PermissionHandler | undefined;
   private elicitationHandler: ElicitationHandler | undefined;
   private extMethodHandler: ExtMethodHandler | undefined;
+  private startPromise: Promise<void> | undefined;
 
   private restartCount = 0;
   private disposed = false;
@@ -92,7 +93,7 @@ export class AcpClient implements vscode.Disposable {
   // ── Lifecycle ──
 
   async start(): Promise<void> {
-    if (this.disposed) {
+    if (this.disposed || this.isConnected) {
       return;
     }
     this.log.info("Starting ACP agent subprocess...");
@@ -282,17 +283,32 @@ export class AcpClient implements vscode.Disposable {
     this.log.info(`Restarting agent in ${delay}ms (attempt ${this.restartCount})...`);
     setTimeout(() => {
       if (!this.disposed) {
-        this.start().catch((err) => {
+        this.ensureStarted().catch((err) => {
           this.log.error(`Restart failed`, err);
         });
       }
     }, delay);
   }
 
+  async ensureStarted(): Promise<void> {
+    if (this.disposed || this.isConnected) {
+      return;
+    }
+    if (this.startPromise) {
+      await this.startPromise;
+      return;
+    }
+
+    this.startPromise = this.start().finally(() => {
+      this.startPromise = undefined;
+    });
+    await this.startPromise;
+  }
+
   async restart(): Promise<void> {
     this.restartCount = 0;
     this.kill();
-    await this.start();
+    await this.ensureStarted();
   }
 
   /**

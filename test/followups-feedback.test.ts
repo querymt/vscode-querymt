@@ -284,7 +284,7 @@ describe("onDidReceiveFeedback", () => {
     // Allow async to settle
     await vi.waitFor(() => {
       expect(acpClient.extNotification).toHaveBeenCalledWith(
-        "querymt/feedback",
+        "_querymt/feedback",
         { sessionId: "session-abc", kind: "helpful" },
       );
     });
@@ -303,7 +303,7 @@ describe("onDidReceiveFeedback", () => {
 
     await vi.waitFor(() => {
       expect(acpClient.extNotification).toHaveBeenCalledWith(
-        "querymt/feedback",
+        "_querymt/feedback",
         { sessionId: "session-def", kind: "unhelpful" },
       );
     });

@@ -102,8 +102,25 @@ export class QueryMTModelProvider
     options: vscode.PrepareLanguageModelChatModelOptions,
     token: vscode.CancellationToken,
   ): Promise<QueryMTModelInfo[]> {
+    const autoStart = vscode.workspace
+      .getConfiguration("querymt")
+      .get<boolean>("autoStart", true);
+
     if (!this.acpClient.isConnected) {
-      this.log.debug("Agent not connected, returning empty model list");
+      if (!autoStart) {
+        this.log.debug("Agent not connected and autoStart disabled; returning empty model list");
+        return [];
+      }
+
+      try {
+        await this.acpClient.ensureStarted();
+      } catch (err) {
+        this.log.warn(`Failed to start agent for model listing: ${formatError(err)}`);
+        return [];
+      }
+    }
+
+    if (token.isCancellationRequested || !this.acpClient.isConnected) {
       return [];
     }
 
@@ -181,6 +198,9 @@ export class QueryMTModelProvider
     progress: vscode.Progress<vscode.LanguageModelResponsePart>,
     token: vscode.CancellationToken,
   ): Promise<void> {
+    if (!this.acpClient.isConnected) {
+      await this.acpClient.ensureStarted();
+    }
     if (!this.acpClient.isConnected) {
       throw new Error("QueryMT agent is not connected");
     }

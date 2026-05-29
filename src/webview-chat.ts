@@ -20,10 +20,65 @@ import { createLogger, formatError } from "./logger.js";
 import {
   selectOptionItems,
   getSelectCurrentValue,
-  fetchModelList,
+  fetchModelListWithMeta,
 } from "./config-options.js";
 
 const log = createLogger("webview-chat");
+const MODEL_LIST_RETRY_DELAYS_MS = [500, 1000, 2000, 3000];
+
+interface WebviewSlashCommand {
+  name: string;
+  description: string;
+  inputHint?: string;
+}
+
+export function normalizeSlashCommandName(name: string): string {
+  const trimmed = name.trim();
+  return trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+}
+
+export function extractSlashCommandInputHint(input: unknown): string | undefined {
+  if (!input || typeof input !== "object") {
+    return undefined;
+  }
+
+  const value = input as Record<string, unknown>;
+  if (typeof value.hint === "string" && value.hint.trim().length > 0) {
+    return value.hint;
+  }
+
+  const unstructured = value.unstructured;
+  if (unstructured && typeof unstructured === "object") {
+    const nestedHint = (unstructured as Record<string, unknown>).hint;
+    if (typeof nestedHint === "string" && nestedHint.trim().length > 0) {
+      return nestedHint;
+    }
+  }
+
+  return undefined;
+}
+
+export function normalizeSlashCommands(commands: unknown): WebviewSlashCommand[] {
+  if (!Array.isArray(commands)) {
+    return [];
+  }
+
+  return commands
+    .filter(
+      (
+        cmd,
+      ): cmd is { name: string; description: string; input?: unknown } =>
+        !!cmd &&
+        typeof cmd === "object" &&
+        typeof (cmd as { name?: unknown }).name === "string" &&
+        typeof (cmd as { description?: unknown }).description === "string",
+    )
+    .map((cmd) => ({
+      name: normalizeSlashCommandName(cmd.name),
+      description: cmd.description,
+      inputHint: extractSlashCommandInputHint(cmd.input),
+    }));
+}
 
 export class ChatViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewId = "querymt.chatView";
@@ -32,6 +87,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private updateSubscription: vscode.Disposable | undefined;
   private activeSessionId: string | undefined;
   private isPrompting = false;
+  private readonly sessionCommands = new Map<string, WebviewSlashCommand[]>();
+  private modelListRetryTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -74,6 +131,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
     this.updateSubscription = this.acpClient.onSessionUpdate(
       (params: SessionNotification) => {
+        if (params.update.sessionUpdate === "available_commands_update") {
+          const commands = normalizeSlashCommands((params.update as any).availableCommands);
+          this.sessionCommands.set(params.sessionId, commands);
+          if (params.sessionId === this.activeSessionId) {
+            this.postToWebview({ type: "commands", commands });
+          }
+        }
+
         if (params.sessionId !== this.activeSessionId) return;
 
         // Keep config options in sync
@@ -113,6 +178,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       this.view = undefined;
       this.activeSessionId = undefined;
       this.isPrompting = false;
+      this.sessionCommands.clear();
+      this.clearModelListRetry();
       this.updateSubscription?.dispose();
       this.updateSubscription = undefined;
     });
@@ -197,6 +264,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     // If there's already an active session, load its config options
     if (this.activeSessionId) {
       this.sendConfigOptions(this.activeSessionId);
+      this.sendCommands(this.activeSessionId);
     } else {
       // Auto-create a session
       await this.onNewSession();
@@ -286,6 +354,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       this.postToWebview({ type: "clear" });
       await this.sendSessionList();
       this.sendConfigOptions(sessionId);
+      this.sendCommands(sessionId);
       await this.sendModelList();
     } catch (err) {
       this.postToWebview({
@@ -304,6 +373,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       this.postToWebview({ type: "clear" });
       await this.sendSessionList();
       this.sendConfigOptions(sessionId);
+      this.sendCommands(sessionId);
       await this.sendModelList();
       log.info(`Switched to session: ${sessionId}`);
     } catch (err) {
@@ -538,13 +608,39 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private async sendModelList(): Promise<void> {
-    const models = await fetchModelList(this.acpClient);
+  private clearModelListRetry(): void {
+    if (this.modelListRetryTimer) {
+      clearTimeout(this.modelListRetryTimer);
+      this.modelListRetryTimer = undefined;
+    }
+  }
+
+  private async sendModelList(attempt = 0): Promise<void> {
+    const result = await fetchModelListWithMeta(this.acpClient);
+    const loading = result.models.length === 0 && result.refreshInProgress;
+
     this.postToWebview({
       type: "models",
-      models,
+      models: result.models,
       activeId: "",
+      loading,
     });
+
+    const shouldRetry =
+      result.models.length === 0 &&
+      attempt < MODEL_LIST_RETRY_DELAYS_MS.length &&
+      (result.refreshInProgress || attempt === 0);
+
+    this.clearModelListRetry();
+    if (!shouldRetry) {
+      return;
+    }
+
+    const delay = MODEL_LIST_RETRY_DELAYS_MS[attempt] ?? MODEL_LIST_RETRY_DELAYS_MS.at(-1) ?? 1000;
+    this.modelListRetryTimer = setTimeout(() => {
+      this.modelListRetryTimer = undefined;
+      void this.sendModelList(attempt + 1);
+    }, delay);
   }
 
   private sendConfigOptions(sessionId: string): void {
@@ -570,6 +666,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
 
     this.postToWebview({ type: "configOptions", options });
+  }
+
+  private sendCommands(sessionId: string): void {
+    this.postToWebview({
+      type: "commands",
+      commands: this.sessionCommands.get(sessionId) ?? [],
+    });
   }
 
   // ── Session update rendering ──

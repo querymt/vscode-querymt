@@ -75,6 +75,68 @@ export interface ModelListEntry {
   provider: string;
 }
 
+export interface ModelListResult {
+  models: ModelListEntry[];
+  refreshInProgress: boolean;
+  stale: boolean;
+}
+
+interface AgentModelEntry {
+  id: string;
+  label: string;
+  provider: string;
+  model: string;
+}
+
+interface AgentModelListResponse {
+  models?: AgentModelEntry[];
+  meta?: {
+    refresh_in_progress?: boolean;
+    stale?: boolean;
+  };
+}
+
+/**
+ * Fetch the list of available models from the agent.
+ * Returns a simplified list suitable for dropdown display, plus snapshot metadata.
+ */
+export async function fetchModelListWithMeta(
+  acpClient: AcpClient,
+): Promise<ModelListResult> {
+  if (!acpClient.isConnected) {
+    return {
+      models: [],
+      refreshInProgress: false,
+      stale: true,
+    };
+  }
+
+  try {
+    const resp = (await acpClient.extMethod(
+      "_querymt/models",
+      {},
+    )) as AgentModelListResponse;
+
+    return {
+      models: (resp.models ?? [])
+        .filter((m) => !!m.id)
+        .map((m) => ({
+          id: m.id,
+          label: m.label || m.model || m.id,
+          provider: m.provider ?? "",
+        })),
+      refreshInProgress: !!resp.meta?.refresh_in_progress,
+      stale: !!resp.meta?.stale,
+    };
+  } catch {
+    return {
+      models: [],
+      refreshInProgress: false,
+      stale: true,
+    };
+  }
+}
+
 /**
  * Fetch the list of available models from the agent.
  * Returns a simplified list suitable for dropdown display.
@@ -82,29 +144,6 @@ export interface ModelListEntry {
 export async function fetchModelList(
   acpClient: AcpClient,
 ): Promise<ModelListEntry[]> {
-  if (!acpClient.isConnected) return [];
-
-  interface AgentModelEntry {
-    id: string;
-    label: string;
-    provider: string;
-    model: string;
-  }
-
-  try {
-    const resp = (await acpClient.extMethod(
-      "_querymt/models",
-      {},
-    )) as { models?: AgentModelEntry[] };
-
-    return (resp.models ?? [])
-      .filter((m) => !!m.id)
-      .map((m) => ({
-        id: m.id,
-        label: m.label || m.model || m.id,
-        provider: m.provider ?? "",
-      }));
-  } catch {
-    return [];
-  }
+  const result = await fetchModelListWithMeta(acpClient);
+  return result.models;
 }

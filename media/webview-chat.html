@@ -405,7 +405,7 @@
     /* ── @file autocomplete popup ── */
     .input-area { position: relative; }
 
-    #file-popup {
+    #suggestion-popup {
       position: absolute;
       bottom: 100%;
       left: 0;
@@ -420,15 +420,15 @@
       margin-bottom: 4px;
       box-shadow: 0 2px 8px rgba(0,0,0,0.3);
     }
-    #file-popup.visible { display: block; }
+    #suggestion-popup.visible { display: block; }
 
-    #file-popup::-webkit-scrollbar { width: 6px; }
-    #file-popup::-webkit-scrollbar-thumb {
+    #suggestion-popup::-webkit-scrollbar { width: 6px; }
+    #suggestion-popup::-webkit-scrollbar-thumb {
       background: var(--scrollbar);
       border-radius: 3px;
     }
 
-    .file-item {
+    .suggestion-item {
       padding: 5px 10px;
       cursor: pointer;
       font-size: 12px;
@@ -436,25 +436,39 @@
       align-items: center;
       gap: 6px;
     }
-    .file-item:hover {
+    .suggestion-item:hover {
       background: var(--vscode-list-hoverBackground, rgba(255,255,255,0.05));
     }
-    .file-item.active {
+    .suggestion-item.active {
       background: var(--vscode-list-activeSelectionBackground, #094771);
       color: var(--vscode-list-activeSelectionForeground, #fff);
     }
-    .file-item .file-icon {
+    .suggestion-item .suggestion-icon {
       flex-shrink: 0;
       color: var(--muted);
       font-size: 11px;
     }
-    .file-item .file-name {
+    .suggestion-item .suggestion-main {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      flex: 1;
+    }
+    .suggestion-item .suggestion-title {
       font-weight: 500;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
-    .file-item .file-path {
+    .suggestion-item .suggestion-detail {
+      color: var(--muted);
+      font-size: 11px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .suggestion-item .suggestion-side {
       color: var(--muted);
       font-size: 11px;
       overflow: hidden;
@@ -464,12 +478,13 @@
       flex-shrink: 0;
       max-width: 50%;
     }
-    .file-item.active .file-path {
+    .suggestion-item.active .suggestion-detail,
+    .suggestion-item.active .suggestion-side {
       color: var(--vscode-list-activeSelectionForeground, #fff);
       opacity: 0.7;
     }
 
-    #file-popup .popup-header {
+    #suggestion-popup .popup-header {
       padding: 4px 10px;
       font-size: 11px;
       color: var(--muted);
@@ -529,7 +544,7 @@
 
   <!-- Input -->
   <div class="input-area">
-    <div id="file-popup"></div>
+    <div id="suggestion-popup"></div>
     <textarea
       id="input"
       rows="1"
@@ -556,15 +571,18 @@
     const inputEl = document.getElementById("input");
     const btnSend = document.getElementById("btn-send");
     const btnCancel = document.getElementById("btn-cancel");
-    const filePopup = document.getElementById("file-popup");
+    const suggestionPopup = document.getElementById("suggestion-popup");
 
     let isStreaming = false;
 
-    // @file autocomplete state
+    // Slash command and @file suggestion state
+    let availableCommands = [];
     let popupVisible = false;
-    let popupItems = [];    // [{name, path}, ...]
-    let popupActiveIdx = 0; // highlighted index
-    let atMentionStart = -1; // cursor position of the '@'
+    let popupItems = [];
+    let popupActiveIdx = 0;
+    let popupMode = null; // "command" | "file"
+    let atMentionStart = -1;
+    let slashCommandStart = -1;
     let currentAssistantBody = null; // the .msg-body element being streamed into
     let currentMarkdownDiv = null;   // the current .msg-markdown div receiving chunks
     let markdownBuffer = ""; // accumulates raw markdown for the current segment
@@ -617,12 +635,16 @@
         }
         if (e.key === "Tab" || (e.key === "Enter" && popupItems.length > 0)) {
           e.preventDefault();
-          insertFileReference(popupItems[popupActiveIdx]);
+          if (popupMode === "command") {
+            insertCommand(popupItems[popupActiveIdx]);
+          } else {
+            insertFileReference(popupItems[popupActiveIdx]);
+          }
           return;
         }
         if (e.key === "Escape") {
           e.preventDefault();
-          hideFilePopup();
+          hideSuggestionPopup();
           return;
         }
       }
@@ -633,11 +655,11 @@
       }
     });
 
-    // Auto-grow textarea + trigger @file autocomplete
+    // Auto-grow textarea + trigger slash/@ suggestions
     inputEl.addEventListener("input", () => {
       inputEl.style.height = "auto";
       inputEl.style.height = Math.min(inputEl.scrollHeight, 200) + "px";
-      checkAtMention();
+      checkSuggestions();
     });
 
     function submitPrompt() {
@@ -662,6 +684,14 @@
           break;
 
         case "models":
+          if (msg.loading && (!msg.models || msg.models.length === 0)) {
+            populateSelect(selModel, [
+              { value: "", label: "Loading models..." },
+            ], "");
+            selModel.disabled = true;
+            break;
+          }
+
           populateSelect(selModel, [
             { value: "", label: "Default" },
             ...msg.models.map((m) => ({
@@ -669,6 +699,7 @@
               label: m.provider ? `${m.label} (${m.provider})` : m.label,
             })),
           ], msg.activeId || "");
+          selModel.disabled = false;
           break;
 
         case "configOptions":
@@ -780,8 +811,15 @@
           break;
         }
 
+        case "commands":
+          availableCommands = msg.commands || [];
+          checkSuggestions();
+          break;
+
         case "fileSuggestions":
-          showFilePopup(msg.files || []);
+          if (popupMode === "file") {
+            showFilePopup(msg.files || []);
+          }
           break;
 
         case "error":
@@ -1074,7 +1112,38 @@
       send("openFile", { path: file, line });
     });
 
-    // ── @file autocomplete ──
+    // ── Slash command and @file autocomplete ──
+
+    function checkSuggestions() {
+      if (checkSlashCommand()) {
+        return;
+      }
+      checkAtMention();
+    }
+
+    function checkSlashCommand() {
+      const cursorPos = inputEl.selectionStart;
+      const textBefore = inputEl.value.substring(0, cursorPos);
+      const match = textBefore.match(/^\/([^\s]*)$/);
+      if (!match) {
+        slashCommandStart = -1;
+        if (popupMode === "command") {
+          hideSuggestionPopup();
+        }
+        return false;
+      }
+
+      slashCommandStart = 0;
+      const query = match[1].toLowerCase();
+      const commands = availableCommands.filter((cmd) =>
+        String(cmd.name || "")
+          .slice(1)
+          .toLowerCase()
+          .includes(query),
+      );
+      showCommandPopup(commands);
+      return true;
+    }
 
     function checkAtMention() {
       const cursorPos = inputEl.selectionStart;
@@ -1083,77 +1152,144 @@
       // Look for an '@' that starts a mention (preceded by start-of-string or whitespace)
       const match = textBefore.match(/(^|[\s])@([^\s]*)$/);
       if (match) {
-        atMentionStart = textBefore.length - match[2].length - 1; // position of '@'
-        const query = match[2]; // text after '@'
+        popupMode = "file";
+        atMentionStart = textBefore.length - match[2].length - 1;
+        const query = match[2];
         send("fileSearch", { query });
-      } else {
-        hideFilePopup();
+      } else if (popupMode === "file") {
+        hideSuggestionPopup();
       }
     }
 
+    function showCommandPopup(commands) {
+      popupMode = "command";
+      popupItems = commands;
+      popupActiveIdx = 0;
+
+      if (commands.length === 0) {
+        hideSuggestionPopup();
+        return;
+      }
+
+      suggestionPopup.innerHTML = "";
+
+      const header = document.createElement("div");
+      header.className = "popup-header";
+      header.textContent = "Commands - select to insert";
+      suggestionPopup.appendChild(header);
+
+      commands.forEach((command, idx) => {
+        const item = document.createElement("div");
+        item.className = "suggestion-item" + (idx === 0 ? " active" : "");
+        item.setAttribute("data-idx", idx);
+        item.innerHTML =
+          `<span class="suggestion-icon">/</span>` +
+          `<span class="suggestion-main">` +
+            `<span class="suggestion-title">${escapeHtml(command.name)}</span>` +
+            `<span class="suggestion-detail">${escapeHtml(command.description || "")}</span>` +
+          `</span>` +
+          `<span class="suggestion-side">${escapeHtml(command.inputHint || "")}</span>`;
+        item.addEventListener("mousedown", (e) => {
+          e.preventDefault();
+          insertCommand(commands[idx]);
+        });
+        item.addEventListener("mouseenter", () => {
+          popupActiveIdx = idx;
+          renderPopupHighlight();
+        });
+        suggestionPopup.appendChild(item);
+      });
+
+      suggestionPopup.classList.add("visible");
+      popupVisible = true;
+    }
+
     function showFilePopup(files) {
+      popupMode = "file";
       popupItems = files;
       popupActiveIdx = 0;
 
       if (files.length === 0) {
-        hideFilePopup();
+        hideSuggestionPopup();
         return;
       }
 
-      filePopup.innerHTML = "";
+      suggestionPopup.innerHTML = "";
 
-      // Header
       const header = document.createElement("div");
       header.className = "popup-header";
-      header.textContent = "Files — select to attach";
-      filePopup.appendChild(header);
+      header.textContent = "Files - select to attach";
+      suggestionPopup.appendChild(header);
 
       files.forEach((file, idx) => {
         const item = document.createElement("div");
-        item.className = "file-item" + (idx === 0 ? " active" : "");
+        item.className = "suggestion-item" + (idx === 0 ? " active" : "");
         item.setAttribute("data-idx", idx);
         item.innerHTML =
-          `<span class="file-icon">\u{1F4C4}</span>` +
-          `<span class="file-name">${escapeHtml(file.name)}</span>` +
-          `<span class="file-path">${escapeHtml(file.path)}</span>`;
+          `<span class="suggestion-icon">@</span>` +
+          `<span class="suggestion-main">` +
+            `<span class="suggestion-title">${escapeHtml(file.name)}</span>` +
+          `</span>` +
+          `<span class="suggestion-side">${escapeHtml(file.path)}</span>`;
         item.addEventListener("mousedown", (e) => {
-          e.preventDefault(); // prevent textarea blur
+          e.preventDefault();
           insertFileReference(files[idx]);
         });
         item.addEventListener("mouseenter", () => {
           popupActiveIdx = idx;
           renderPopupHighlight();
         });
-        filePopup.appendChild(item);
+        suggestionPopup.appendChild(item);
       });
 
-      filePopup.classList.add("visible");
+      suggestionPopup.classList.add("visible");
       popupVisible = true;
     }
 
-    function hideFilePopup() {
-      filePopup.classList.remove("visible");
+    function hideSuggestionPopup() {
+      suggestionPopup.classList.remove("visible");
       popupVisible = false;
       popupItems = [];
       popupActiveIdx = 0;
+      popupMode = null;
       atMentionStart = -1;
+      slashCommandStart = -1;
     }
 
     function renderPopupHighlight() {
-      const items = filePopup.querySelectorAll(".file-item");
+      const items = suggestionPopup.querySelectorAll(".suggestion-item");
       items.forEach((el, idx) => {
         el.classList.toggle("active", idx === popupActiveIdx);
       });
-      // Scroll active item into view
       const active = items[popupActiveIdx];
       if (active) {
         active.scrollIntoView({ block: "nearest" });
       }
     }
 
+    function insertCommand(command) {
+      if (!command || slashCommandStart < 0) {
+        hideSuggestionPopup();
+        return;
+      }
+
+      const before = inputEl.value.substring(0, slashCommandStart);
+      const after = inputEl.value.substring(inputEl.selectionStart);
+      const replacement = `${command.name} `;
+      inputEl.value = before + replacement + after;
+      const newPos = before.length + replacement.length;
+      inputEl.selectionStart = newPos;
+      inputEl.selectionEnd = newPos;
+      inputEl.focus();
+
+      hideSuggestionPopup();
+      inputEl.style.height = "auto";
+      inputEl.style.height = Math.min(inputEl.scrollHeight, 200) + "px";
+    }
+
     function insertFileReference(file) {
       if (!file || atMentionStart < 0) {
-        hideFilePopup();
+        hideSuggestionPopup();
         return;
       }
 
@@ -1162,22 +1298,18 @@
       const ref = `@${file.path}`;
       inputEl.value = before + ref + (after.startsWith(" ") ? "" : " ") + after;
 
-      // Position cursor after the inserted reference
       const newPos = before.length + ref.length + (after.startsWith(" ") ? 0 : 1);
       inputEl.selectionStart = newPos;
       inputEl.selectionEnd = newPos;
       inputEl.focus();
 
-      hideFilePopup();
-
-      // Resize textarea
+      hideSuggestionPopup();
       inputEl.style.height = "auto";
       inputEl.style.height = Math.min(inputEl.scrollHeight, 200) + "px";
     }
 
-    // Hide popup when textarea loses focus (with a small delay to allow mousedown on items)
     inputEl.addEventListener("blur", () => {
-      setTimeout(() => hideFilePopup(), 150);
+      setTimeout(() => hideSuggestionPopup(), 150);
     });
 
     // Signal readiness

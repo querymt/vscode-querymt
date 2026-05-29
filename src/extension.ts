@@ -1074,9 +1074,10 @@ export async function activate(
 
   if (autoStart && vscode.workspace.workspaceFolders?.length) {
     statusBar.update("connecting");
-    acpClient.start()
+    acpClient.ensureStarted()
       .then(() => {
         statusBar.update("connected");
+        modelProvider?.refreshModels();
       })
       .catch((err) => {
         statusBar.update("error");

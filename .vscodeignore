@@ -9,6 +9,7 @@ node_modules/
 .github/
 **/*.map
 **/*.svg
+!media/icon.svg
 .gitignore
 .eslintrc*
 .prettierrc*
