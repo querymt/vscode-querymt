@@ -80,11 +80,12 @@ export function normalizeSlashCommands(commands: unknown): WebviewSlashCommand[]
     }));
 }
 
-export class ChatViewProvider implements vscode.WebviewViewProvider {
+export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
   public static readonly viewId = "querymt.chatView";
 
   private view: vscode.WebviewView | undefined;
   private updateSubscription: vscode.Disposable | undefined;
+  private webviewMessageSubscription: vscode.Disposable | undefined;
   private activeSessionId: string | undefined;
   private isPrompting = false;
   private readonly sessionCommands = new Map<string, WebviewSlashCommand[]>();
@@ -94,41 +95,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private readonly context: vscode.ExtensionContext,
     private readonly acpClient: AcpClient,
     private readonly statusBar?: StatusBar,
-  ) {}
-
-  resolveWebviewView(
-    webviewView: vscode.WebviewView,
-    _context: vscode.WebviewViewResolveContext,
-    _token: vscode.CancellationToken,
-  ): void {
-    this.view = webviewView;
-
-    webviewView.webview.options = {
-      enableScripts: true,
-      localResourceRoots: [
-        vscode.Uri.file(join(this.context.extensionPath, "media")),
-      ],
-    };
-
-    // Load the HTML template from disk
-    const htmlPath = join(this.context.extensionPath, "media", "webview-chat.html");
-    webviewView.webview.html = readFileSync(htmlPath, "utf-8");
-
-    // ── Handle messages from webview ──
-
-    webviewView.webview.onDidReceiveMessage(
-      async (msg: WebviewMessage) => {
-        try {
-          await this.handleWebviewMessage(msg);
-        } catch (err) {
-          log.error(`Webview message handler error: ${formatError(err)}`);
-          this.postToWebview({ type: "error", message: formatError(err) });
-        }
-      },
-    );
-
-    // ── Subscribe to session updates ──
-
+  ) {
     this.updateSubscription = this.acpClient.onSessionUpdate(
       (params: SessionNotification) => {
         if (params.update.sessionUpdate === "available_commands_update") {
@@ -164,25 +131,72 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         if (params.update.sessionUpdate === "session_info_update") {
           const info = params.update as any;
           if (info.title) {
-            this.sendSessionList();
+            void this.sendSessionList();
           }
         }
 
         this.renderUpdateToWebview(params.update);
       },
     );
+  }
+
+  resolveWebviewView(
+    webviewView: vscode.WebviewView,
+    _context: vscode.WebviewViewResolveContext,
+    _token: vscode.CancellationToken,
+  ): void {
+    this.view = webviewView;
+
+    webviewView.webview.options = {
+      enableScripts: true,
+      localResourceRoots: [
+        vscode.Uri.file(join(this.context.extensionPath, "media")),
+      ],
+    };
+
+    // Load the HTML template from disk
+    const htmlPath = join(this.context.extensionPath, "media", "webview-chat.html");
+    webviewView.webview.html = readFileSync(htmlPath, "utf-8");
+
+    // ── Handle messages from webview ──
+
+    this.webviewMessageSubscription?.dispose();
+    this.webviewMessageSubscription = webviewView.webview.onDidReceiveMessage(
+      async (msg: WebviewMessage) => {
+        try {
+          await this.handleWebviewMessage(msg);
+        } catch (err) {
+          log.error(`Webview message handler error: ${formatError(err)}`);
+          this.postToWebview({ type: "error", message: formatError(err) });
+        }
+      },
+    );
 
     // ── Cleanup on dispose ──
 
     webviewView.onDidDispose(() => {
-      this.view = undefined;
+      if (this.view === webviewView) {
+        this.view = undefined;
+      }
       this.activeSessionId = undefined;
       this.isPrompting = false;
       this.sessionCommands.clear();
       this.clearModelListRetry();
-      this.updateSubscription?.dispose();
-      this.updateSubscription = undefined;
+      this.webviewMessageSubscription?.dispose();
+      this.webviewMessageSubscription = undefined;
     });
+  }
+
+  dispose(): void {
+    this.updateSubscription?.dispose();
+    this.updateSubscription = undefined;
+    this.webviewMessageSubscription?.dispose();
+    this.webviewMessageSubscription = undefined;
+    this.clearModelListRetry();
+    this.sessionCommands.clear();
+    this.view = undefined;
+    this.activeSessionId = undefined;
+    this.isPrompting = false;
   }
 
   /** Programmatically focus the view (used by the openChat command). */
@@ -276,50 +290,55 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private async onPrompt(text: string): Promise<void> {
     if (!text.trim() || this.isPrompting) return;
 
-    // Ensure connected
-    if (!this.acpClient.isConnected) {
-      try {
-        await this.acpClient.start();
-      } catch (err) {
-        this.postToWebview({
-          type: "error",
-          message: `Failed to start agent: ${formatError(err)}`,
-        });
-        return;
-      }
-    }
-
-    // Ensure we have a session
-    if (!this.activeSessionId) {
-      await this.onNewSession();
-      if (!this.activeSessionId) return;
-    }
-
     this.isPrompting = true;
-    this.postToWebview({ type: "status", state: "streaming" });
-
-    // Resolve @file references and build content blocks
-    const resourceBlocks = await this.resolveFileReferences(text);
-    const contentBlocks: ContentBlock[] = [
-      { type: "text", text },
-      ...resourceBlocks,
-    ];
-
     try {
-      const result = await this.acpClient.prompt(this.activeSessionId, contentBlocks);
-      log.info(`Prompt completed: stopReason=${result.stopReason}`);
-      if (result.stopReason === "cancelled") {
-        this.postToWebview({ type: "cancelled" });
+      // Ensure connected
+      if (!this.acpClient.isConnected) {
+        try {
+          await this.acpClient.start();
+        } catch (err) {
+          this.postToWebview({
+            type: "error",
+            message: `Failed to start agent: ${formatError(err)}`,
+          });
+          return;
+        }
       }
-    } catch (err) {
-      const message = formatError(err);
-      if (message !== "Cancelled") {
-        this.postToWebview({ type: "error", message });
+
+      // Ensure we have a session
+      if (!this.activeSessionId) {
+        await this.onNewSession();
+        if (!this.activeSessionId) return;
+      }
+
+      this.postToWebview({ type: "status", state: "streaming" });
+
+      // Resolve @file references and build content blocks
+      const resourceBlocks = await this.resolveFileReferences(text);
+      const contentBlocks: ContentBlock[] = [
+        { type: "text", text },
+        ...resourceBlocks,
+      ];
+
+      let stopReason: string | undefined;
+      try {
+        const result = await this.acpClient.prompt(this.activeSessionId, contentBlocks);
+        stopReason = result.stopReason;
+        log.info(`Prompt completed: stopReason=${result.stopReason}`);
+        if (result.stopReason === "cancelled") {
+          this.postToWebview({ type: "cancelled" });
+        }
+      } catch (err) {
+        const message = formatError(err);
+        if (message !== "Cancelled") {
+          this.postToWebview({ type: "error", message });
+        }
+      } finally {
+        this.postToWebview({ type: "done", stopReason });
+        this.postToWebview({ type: "status", state: "idle" });
       }
     } finally {
       this.isPrompting = false;
-      this.postToWebview({ type: "done" });
-      this.postToWebview({ type: "status", state: "idle" });
     }
   }
 
@@ -370,16 +389,19 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private async onSwitchSession(sessionId: string): Promise<void> {
     if (sessionId === this.activeSessionId) return;
 
+    const previousSessionId = this.activeSessionId;
+    this.activeSessionId = sessionId;
+    this.postToWebview({ type: "clear" });
+
     try {
       await this.acpClient.loadSession(sessionId);
-      this.activeSessionId = sessionId;
-      this.postToWebview({ type: "clear" });
       await this.sendSessionList();
       this.sendConfigOptions(sessionId);
       this.sendCommands(sessionId);
       await this.sendModelList();
       log.info(`Switched to session: ${sessionId}`);
     } catch (err) {
+      this.activeSessionId = previousSessionId;
       this.postToWebview({
         type: "error",
         message: `Failed to load session: ${formatError(err)}`,

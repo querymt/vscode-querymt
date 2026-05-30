@@ -539,7 +539,7 @@
   <!-- Loading indicator -->
   <div class="loading" id="loading">
     <span class="spinner"></span>
-    <span>Thinking...</span>
+    <span id="loading-label">Thinking...</span>
   </div>
 
   <!-- Input -->
@@ -568,12 +568,14 @@
     const messagesEl = document.getElementById("messages");
     const welcomeEl = document.getElementById("welcome");
     const loadingEl = document.getElementById("loading");
+    const loadingLabelEl = document.getElementById("loading-label");
     const inputEl = document.getElementById("input");
     const btnSend = document.getElementById("btn-send");
     const btnCancel = document.getElementById("btn-cancel");
     const suggestionPopup = document.getElementById("suggestion-popup");
 
     let isStreaming = false;
+    let hasVisibleAssistantOutput = false;
 
     // Slash command and @file suggestion state
     let availableCommands = [];
@@ -665,6 +667,8 @@
     function submitPrompt() {
       const text = inputEl.value.trim();
       if (!text || isStreaming) return;
+      hasVisibleAssistantOutput = false;
+      setStreamingState(true);
       send("prompt", { text });
       appendMessage("user", text);
       inputEl.value = "";
@@ -720,6 +724,7 @@
           break;
 
         case "chunk":
+          markAssistantOutputVisible();
           ensureAssistantBubble();
           markdownBuffer += msg.text;
           currentMarkdownDiv.innerHTML = renderMarkdown(markdownBuffer);
@@ -727,6 +732,7 @@
           break;
 
         case "thought": {
+          markAssistantOutputVisible();
           ensureAssistantBubble();
           // Flush current markdown segment
           if (markdownBuffer) {
@@ -747,6 +753,7 @@
         }
 
         case "toolProgress": {
+          markAssistantOutputVisible();
           ensureAssistantBubble();
           const toolId = msg.toolCallId || msg.title;
           let el = currentAssistantBody.querySelector(`details[data-tool-id="${CSS.escape(toolId)}"]`);
@@ -785,6 +792,7 @@
         }
 
         case "toolContent": {
+          markAssistantOutputVisible();
           ensureAssistantBubble();
           const tcId = msg.toolCallId || "";
           const detailsEl = currentAssistantBody.querySelector(`details[data-tool-id="${CSS.escape(tcId)}"]`);
@@ -828,6 +836,7 @@
           break;
 
         case "cancelled":
+          markAssistantOutputVisible();
           ensureAssistantBubble();
           markdownBuffer += "\n*Cancelled.*\n";
           currentMarkdownDiv.innerHTML = renderMarkdown(markdownBuffer);
@@ -863,7 +872,22 @@
       btnSend.disabled = streaming;
       btnSend.style.display = streaming ? "none" : "";
       btnCancel.style.display = streaming ? "" : "none";
-      loadingEl.classList.toggle("visible", streaming);
+      if (!streaming) {
+        hasVisibleAssistantOutput = false;
+      }
+      updateLoadingState();
+    }
+
+    function markAssistantOutputVisible() {
+      if (!hasVisibleAssistantOutput) {
+        hasVisibleAssistantOutput = true;
+        updateLoadingState();
+      }
+    }
+
+    function updateLoadingState() {
+      loadingEl.classList.toggle("visible", isStreaming);
+      loadingLabelEl.textContent = hasVisibleAssistantOutput ? "Finalizing..." : "Thinking...";
     }
 
     function appendMessage(role, text) {
@@ -932,6 +956,8 @@
       currentAssistantBody = null;
       currentMarkdownDiv = null;
       markdownBuffer = "";
+      hasVisibleAssistantOutput = false;
+      updateLoadingState();
     }
 
     function scrollToBottom() {

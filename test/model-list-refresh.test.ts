@@ -5,6 +5,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("vscode", () => ({
+  Uri: {
+    file: vi.fn((path: string) => ({ fsPath: path })),
+  },
   workspace: {
     workspaceFolders: [{ uri: { fsPath: "/workspace" } }],
     getConfiguration: vi.fn(() => ({
@@ -93,6 +96,7 @@ describe("ChatViewProvider model-list retries", () => {
     const { ChatViewProvider } = await import("../src/webview-chat.js");
     const acpClient = {
       isConnected: true,
+      onSessionUpdate: vi.fn(() => ({ dispose: vi.fn() })),
       extMethod: vi
         .fn()
         .mockResolvedValueOnce({
@@ -150,6 +154,7 @@ describe("ChatViewProvider model-list retries", () => {
     const { ChatViewProvider } = await import("../src/webview-chat.js");
     const acpClient = {
       isConnected: true,
+      onSessionUpdate: vi.fn(() => ({ dispose: vi.fn() })),
       extMethod: vi
         .fn()
         .mockResolvedValueOnce({

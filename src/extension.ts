@@ -451,6 +451,7 @@ export async function activate(
   // ── Webview Chat View (works everywhere — sidebar, panel, secondary sidebar) ──
 
   const chatViewProvider = new ChatViewProvider(context, acpClient!, statusBar);
+  context.subscriptions.push(chatViewProvider);
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(
       ChatViewProvider.viewId,
