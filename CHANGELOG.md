@@ -25,7 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   PNG asset
 - **Startup coordination and regression coverage** — added focused tests for ACP
   startup coalescing, model-provider auto-start behavior, webview command
-  messaging, and model-list refresh retries
+  messaging, model-list refresh retries, webview provider lifecycle cleanup,
+  session switching replay, and concurrent prompt suppression
 
 ### Changed
 
@@ -38,6 +39,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **Language model provider auto-start** — requesting models from VS Code now
   starts the agent on demand when `querymt.autoStart` is enabled, and refreshes
   the provider list after activation connects successfully
+- **Webview provider lifecycle and prompt flow** — the chat view provider now
+  implements explicit disposal, tears down old webview message listeners on
+  re-resolve, prevents overlapping prompts earlier in the request path, and
+  includes ACP `stopReason` metadata in final `done` messages so the webview can
+  track prompt completion more accurately
+- **Webview loading-state feedback** — the bottom loading indicator now switches
+  from `Thinking...` to `Finalizing...` after the assistant starts producing
+  visible output, while keeping input locked until the prompt actually finishes
 
 ### Fixed
 
@@ -47,6 +56,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **Transient empty model pickers after startup** — the webview model dropdown
   now retries after stale or in-progress model snapshots, avoiding the empty
   first-load state when provider discovery finishes shortly after startup
+- **Duplicate and missing webview history state** — fixed stacked webview/event
+  subscriptions that could repeat streamed assistant text, and corrected session
+  switching so the webview clears before `session/load` replay instead of
+  discarding loaded history after the fact
 
 ## [0.3.2] - 2026-04-13
 
