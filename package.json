@@ -249,7 +249,7 @@
     "@types/node": "^24.0.0",
     "@types/semver": "^7.7.1",
     "@types/vscode": "^1.99.0",
-    "@vscode/test-electron": "^2.5.2",
+    "@vscode/test-electron": "^3.0.0",
     "@vscode/vsce": "^3.0.0",
     "esbuild": "^0.28.0",
     "typescript": "^6.0.0",
